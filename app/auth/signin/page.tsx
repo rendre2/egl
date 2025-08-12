@@ -263,7 +263,7 @@ export default function SignInPage() {
           className="inline-flex items-center text-blue-600 hover:text-orange-600 transition-colors mb-6"
         >
           <ArrowLeft className="w-4 h-4 mr-2" />
-          Retour à l'accueil
+          Retour à l'accueil 
         </Link>
 
         <Suspense fallback={<LoadingSkeleton />}>
