@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-
+export const dynamic = 'force-dynamic'
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -63,8 +63,6 @@ export async function POST(
     }
 
     // Vérifier que le contenu est débloqué pour cet utilisateur
-    // Logique de déblocage : le premier contenu du premier chapitre du premier module est toujours débloqué
-    // Les autres contenus sont débloqués si le contenu précédent est terminé
     const allContents = await prisma.content.findMany({
       where: { 
         isActive: true,

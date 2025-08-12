@@ -109,7 +109,7 @@ export default function SignUpPage() {
         <Card className="shadow-xl border-0">
           <CardHeader className="text-center space-y-4">
             <div className="mx-auto w-16 h-16 bg-gradient-to-br from-orange-500 to-blue-600 rounded-full flex items-center justify-center">
-              <span className="text-white font-bold text-2xl">EC</span>
+              <User className="w-8 h-8 text-white" />
             </div>
             <CardTitle className="text-2xl font-bold text-blue-900">Inscription</CardTitle>
             <CardDescription className="text-gray-600">
