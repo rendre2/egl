@@ -21,13 +21,6 @@ import {
   Calendar
 } from 'lucide-react'
 import { 
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  ChartLegend,
-  ChartLegendContent
-} from '@/components/ui/chart'
-import { 
   BarChart, 
   Bar, 
   XAxis, 
@@ -38,7 +31,9 @@ import {
   Pie,
   Cell,
   LineChart,
-  Line
+  Line,
+  Tooltip,
+  Legend
 } from 'recharts'
 
 interface AnalyticsData {
@@ -76,19 +71,11 @@ interface AnalyticsData {
   }>
 }
 
-const chartConfig = {
-  users: {
-    label: "Utilisateurs",
-    color: "hsl(var(--chart-1))",
-  },
-  completed: {
-    label: "Complétés",
-    color: "hsl(var(--chart-2))",
-  },
-  progress: {
-    label: "En cours",
-    color: "hsl(var(--chart-3))",
-  },
+// Configuration des couleurs pour les graphiques
+const chartColors = {
+  users: "#0088FE",
+  completed: "#00C49F",
+  progress: "#FFBB28",
 }
 
 export default function AdminAnalyticsPage() {
@@ -119,6 +106,23 @@ export default function AdminAnalyticsPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Composant de tooltip personnalisé
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white p-3 border rounded shadow-lg">
+          <p className="font-medium">{label}</p>
+          {payload.map((item: any, index: number) => (
+            <p key={index} style={{ color: item.color }}>
+              {item.name}: {item.value}
+            </p>
+          ))}
+        </div>
+      )
+    }
+    return null
   }
 
   if (status === 'loading' || loading) {
@@ -242,18 +246,19 @@ export default function AdminAnalyticsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ChartContainer config={chartConfig} className="h-[300px]">
+              <div className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={moduleProgressData}>
+                  <BarChart data={moduleProgressData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="name" />
                     <YAxis />
-                    <ChartTooltip content={<ChartTooltipContent />} />
-                    <Bar dataKey="totalUsers" fill="var(--color-users)" name="Inscrits" />
-                    <Bar dataKey="completedUsers" fill="var(--color-completed)" name="Terminés" />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend />
+                    <Bar dataKey="totalUsers" fill={chartColors.users} name="Inscrits" />
+                    <Bar dataKey="completedUsers" fill={chartColors.completed} name="Terminés" />
                   </BarChart>
                 </ResponsiveContainer>
-              </ChartContainer>
+              </div>
             </CardContent>
           </Card>
 
@@ -266,9 +271,9 @@ export default function AdminAnalyticsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ChartContainer config={chartConfig} className="h-[300px]">
+              <div className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
+                  <PieChart margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                     <Pie
                       data={usersByCountryData}
                       cx="50%"
@@ -283,10 +288,10 @@ export default function AdminAnalyticsPage() {
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    <ChartTooltip />
+                    <Tooltip />
                   </PieChart>
                 </ResponsiveContainer>
-              </ChartContainer>
+              </div>
             </CardContent>
           </Card>
         </div>
