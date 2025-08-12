@@ -1,0 +1,295 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  nom           String
+  prenom        String
+  telephone     String
+  email         String    @unique
+  emailVerified DateTime?
+  password      String?
+  pays          String
+  ville         String
+  adresse       String?
+  paroisse      String?
+  role          Role      @default(USER)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  accounts      Account[]
+  sessions      Session[]
+  moduleProgress ModuleProgress[]
+  chapterProgress ChapterProgress[]
+  contentProgress ContentProgress[]
+  quizResults   QuizResult[]
+  certificates  Certificate[]
+  notifications Notification[]
+
+  @@map("users")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model Module {
+  id          String   @id @default(cuid())
+  title       String
+  description String   @db.Text
+  thumbnail   String?
+  order       Int      @unique
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  chapters    Chapter[]
+  moduleProgress ModuleProgress[]
+  certificates Certificate[]
+
+  @@map("modules")
+}
+
+model Chapter {
+  id          String   @id @default(cuid())
+  moduleId    String
+  title       String
+  description String   @db.Text
+  order       Int
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  module      Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  contents    Content[]
+  chapterProgress ChapterProgress[]
+  quiz        Quiz?
+
+  @@unique([moduleId, order])
+  @@map("chapters")
+}
+
+model Content {
+  id          String      @id @default(cuid())
+  chapterId   String
+  title       String
+  description String?     @db.Text
+  type        ContentType
+  url         String      // URL de la vidéo ou audio
+  duration    Int         // durée en secondes
+  order       Int
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  
+  chapter     Chapter     @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  contentProgress ContentProgress[]
+
+  @@unique([chapterId, order])
+  @@map("contents")
+}
+
+model ModuleProgress {
+  id           String   @id @default(cuid())
+  userId       String
+  moduleId     String
+  isCompleted  Boolean  @default(false)
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  module       Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, moduleId])
+  @@map("module_progress")
+}
+
+model ChapterProgress {
+  id           String   @id @default(cuid())
+  userId       String
+  chapterId    String
+  isCompleted  Boolean  @default(false)
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapter      Chapter  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, chapterId])
+  @@map("chapter_progress")
+}
+
+model ContentProgress {
+  id           String   @id @default(cuid())
+  userId       String
+  contentId    String
+  watchTime    Int      @default(0) // temps regardé en secondes
+  isCompleted  Boolean  @default(false)
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content      Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, contentId])
+  @@map("content_progress")
+}
+
+model Quiz {
+  id           String   @id @default(cuid())
+  chapterId    String   @unique
+  title        String
+  questions    Json     // stockage JSON des questions
+  passingScore Int      @default(70) // score minimum pour réussir
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  chapter      Chapter     @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  results      QuizResult[]
+
+  @@map("quizzes")
+}
+
+model QuizResult {
+  id        String   @id @default(cuid())
+  userId    String
+  quizId    String
+  score     Int
+  answers   Json     // réponses de l'utilisateur
+  passed    Boolean
+  createdAt DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quiz      Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, quizId])
+  @@map("quiz_results")
+}
+
+model Certificate {
+  id           String   @id @default(cuid())
+  userId       String
+  moduleId     String
+  type         CertificateType
+  issuedAt     DateTime @default(now())
+  certificateNumber String @unique
+  
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  module       Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, moduleId, type])
+  @@map("certificates")
+}
+
+model DailyVerse {
+  id        String   @id @default(cuid())
+  date      DateTime @unique @db.Date
+  verse     String   @db.Text
+  reference String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("daily_verses")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String?          // null pour notifications globales
+  title     String
+  content   String           @db.Text
+  type      NotificationType
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  
+  user      User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model HomePage {
+  id              String   @id @default(cuid())
+  heroTitle       String
+  heroSubtitle    String   @db.Text 
+  heroImage       String?
+  featuredModules Json    
+  testimonials    Json     
+  announcements   Json    
+  testimonialsTitle String?  @default("Témoignages de nos Étudiants")
+  testimonialsSubtitle String? @default("Découvrez comment notre formation spirituelle a impacté la vie de nos frères et sœurs")
+  ctaTitle        String?  @default("Rejoignez notre Communauté")
+  ctaSubtitle     String?  @default("Commencez votre parcours de formation spirituelle dès aujourd'hui et grandissez avec nous dans la foi.")
+  updatedAt       DateTime @updatedAt
+
+  @@map("home_pages")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum ContentType {
+  VIDEO
+  AUDIO
+}
+
+enum CertificateType {
+  BRONZE  // 3 modules
+  SILVER  // 6 modules
+  GOLD    // 9 modules
+}
+
+enum NotificationType {
+  INFO
+  WARNING
+  SUCCESS
+  ANNOUNCEMENT
+}
