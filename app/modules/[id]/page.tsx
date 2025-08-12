@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter, useParams } from 'next/navigation'
 import { Header } from '@/components/header'
@@ -68,6 +68,13 @@ interface Module {
   navigation: Navigation
 }
 
+interface ApiResponse {
+  success: boolean
+  message?: string
+}
+
+interface ModuleResponse extends Module, ApiResponse {}
+
 export default function ModuleDetailPage() {
   const { data: session, status } = useSession()
   const router = useRouter()
@@ -91,38 +98,9 @@ export default function ModuleDetailPage() {
     }
   }, [session, status, router])
 
-  // Charger les données du module
-  useEffect(() => {
-    if (session && params.id) {
-      const fetchModule = async () => {
-        try {
-          const response = await fetch(`/api/modules/${params.id}`)
-          if (!response.ok) {
-            const errorData = await response.json()
-            throw new Error(errorData.message || 'Erreur lors de la récupération du module')
-          }
-          const data = await response.json()
-          if (data.success) {
-            setModule(data)
-            setLocalProgress(data.progress || 0)
-          } else {
-            throw new Error(data.message || 'Erreur lors de la récupération du module')
-          }
-        } catch (error: any) {
-          console.error('Erreur lors du chargement du module:', error)
-          toast.error(error.message || 'Impossible de charger le module')
-          router.push('/modules')
-        } finally {
-          setLoading(false)
-        }
-      }
-      fetchModule()
-    }
-  }, [session, params.id, router])
-
-  // Fonction pour mettre à jour la progression
-  const updateProgress = async (watchTime: number, isCompleted: boolean = false) => {
-    if (updateInProgress || !module) return
+  // Fonction pour mettre à jour la progression (memoized)
+  const updateProgress = useCallback(async (watchTime: number, isCompleted: boolean = false) => {
+    if (updateInProgress || !module || !params.id) return
     
     setUpdateInProgress(true)
     try {
@@ -143,7 +121,37 @@ export default function ModuleDetailPage() {
     } finally {
       setUpdateInProgress(false)
     }
-  }
+  }, [updateInProgress, module, params.id])
+
+  // Charger les données du module
+  useEffect(() => {
+    if (session && params.id) {
+      const fetchModule = async () => {
+        try {
+          const response = await fetch(`/api/modules/${params.id}`)
+          if (!response.ok) {
+            const errorData: ApiResponse = await response.json()
+            throw new Error(errorData.message || 'Erreur lors de la récupération du module')
+          }
+          const data: ModuleResponse = await response.json()
+          if (data.success) {
+            setModule(data)
+            setLocalProgress(data.progress || 0)
+          } else {
+            throw new Error(data.message || 'Erreur lors de la récupération du module')
+          }
+        } catch (error) {
+          console.error('Erreur lors du chargement du module:', error)
+          const errorMessage = error instanceof Error ? error.message : 'Impossible de charger le module'
+          toast.error(errorMessage)
+          router.push('/modules')
+        } finally {
+          setLoading(false)
+        }
+      }
+      fetchModule()
+    }
+  }, [session, params.id, router])
 
   // Gestion du lecteur vidéo
   useEffect(() => {
@@ -168,22 +176,44 @@ export default function ModuleDetailPage() {
     }
 
     const updateDuration = () => {
-      setDuration(video.duration)
-      // Reprendre là où l'utilisateur s'était arrêté
-      if (module.watchTime > 0) {
-        video.currentTime = module.watchTime
+      if (video.duration && !isNaN(video.duration)) {
+        setDuration(video.duration)
+        // Reprendre là où l'utilisateur s'était arrêté
+        if (module.watchTime > 0 && module.watchTime < video.duration) {
+          video.currentTime = module.watchTime
+        }
       }
     }
 
     const handlePlay = () => setIsPlaying(true)
     const handlePause = () => setIsPlaying(false)
+    
+    const handleError = (e: Event) => {
+      console.error('Erreur de lecture vidéo:', e)
+      toast.error('Erreur lors de la lecture de la vidéo')
+    }
+
+    const handleLoadStart = () => {
+      setLoading(true)
+    }
+
+    const handleCanPlay = () => {
+      setLoading(false)
+    }
 
     video.addEventListener('timeupdate', updateTime)
     video.addEventListener('loadedmetadata', updateDuration)
     video.addEventListener('play', handlePlay)
     video.addEventListener('pause', handlePause)
+    video.addEventListener('error', handleError)
+    video.addEventListener('loadstart', handleLoadStart)
+    video.addEventListener('canplay', handleCanPlay)
 
     // Mise à jour périodique de la progression
+    if (progressUpdateInterval.current) {
+      clearInterval(progressUpdateInterval.current)
+    }
+    
     progressUpdateInterval.current = setInterval(() => {
       if (isPlaying && video.currentTime > 0) {
         updateProgress(video.currentTime)
@@ -195,6 +225,9 @@ export default function ModuleDetailPage() {
       video.removeEventListener('loadedmetadata', updateDuration)
       video.removeEventListener('play', handlePlay)
       video.removeEventListener('pause', handlePause)
+      video.removeEventListener('error', handleError)
+      video.removeEventListener('loadstart', handleLoadStart)
+      video.removeEventListener('canplay', handleCanPlay)
       
       if (progressUpdateInterval.current) {
         clearInterval(progressUpdateInterval.current)
@@ -205,14 +238,14 @@ export default function ModuleDetailPage() {
         updateProgress(video.currentTime, localProgress >= 90)
       }
     }
-  }, [module, isPlaying, localProgress])
+  }, [module, isPlaying, localProgress, updateProgress])
 
-  const formatDuration = (seconds: number) => {
+  const formatDuration = (seconds: number): string => {
+    if (!seconds || isNaN(seconds)) return '0 min'
     const minutes = Math.floor(seconds / 60)
-    const remainingSeconds = seconds % 60
+    const remainingSeconds = Math.floor(seconds % 60)
     return remainingSeconds > 0 ? `${minutes}:${remainingSeconds.toString().padStart(2, '0')} min` : `${minutes} min`
   }
-
 
   const togglePlay = () => {
     const video = videoRef.current
@@ -221,21 +254,52 @@ export default function ModuleDetailPage() {
     if (isPlaying) {
       video.pause()
     } else {
-      video.play()
+      const playPromise = video.play()
+      if (playPromise !== undefined) {
+        playPromise.catch(error => {
+          console.error('Erreur lors de la lecture:', error)
+          toast.error('Impossible de lire la vidéo')
+        })
+      }
     }
   }
 
   const handleSeek = (seconds: number) => {
     const video = videoRef.current
-    if (!video) return
-    video.currentTime = Math.max(0, video.currentTime + seconds)
+    if (!video || !video.duration) return
+    
+    const newTime = Math.max(0, Math.min(video.duration, video.currentTime + seconds))
+    video.currentTime = newTime
   }
 
-  const formatTime = (time: number) => {
-    if (isNaN(time)) return '0:00'
+  const formatTime = (time: number): string => {
+    if (isNaN(time) || !isFinite(time)) return '0:00'
     const minutes = Math.floor(time / 60)
     const seconds = Math.floor(time % 60)
     return `${minutes}:${seconds.toString().padStart(2, '0')}`
+  }
+
+  const handleProgressClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const video = videoRef.current
+    if (!video || !video.duration) return
+
+    const rect = event.currentTarget.getBoundingClientRect()
+    const clickPosition = (event.clientX - rect.left) / rect.width
+    const newTime = clickPosition * video.duration
+    video.currentTime = newTime
+  }
+
+  const handleFullscreen = () => {
+    const video = videoRef.current
+    if (!video) return
+
+    if (video.requestFullscreen) {
+      video.requestFullscreen()
+    } else if ((video as any).webkitRequestFullscreen) {
+      (video as any).webkitRequestFullscreen()
+    } else if ((video as any).msRequestFullscreen) {
+      (video as any).msRequestFullscreen()
+    }
   }
 
   if (status === 'loading' || loading) {
@@ -286,64 +350,82 @@ export default function ModuleDetailPage() {
                   src={module.videoUrl}
                   className="w-full aspect-video"
                   preload="metadata"
-                  controls
+                  onError={(e) => {
+                    console.error('Erreur vidéo:', e)
+                    toast.error('Impossible de charger la vidéo')
+                  }}
                 />
                 
+                {/* Contrôles vidéo personnalisés */}
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
-                  <div className="flex items-center space-x-4 text-white">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={togglePlay}
-                      className="text-white hover:bg-white/20"
+                  <div className="space-y-2">
+                    {/* Barre de progression cliquable */}
+                    <div 
+                      className="w-full h-2 bg-white/20 rounded-full cursor-pointer"
+                      onClick={handleProgressClick}
                     >
-                      {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-                    </Button>
-                    
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleSeek(-10)}
-                      className="text-white hover:bg-white/20"
-                    >
-                      <SkipBack className="w-4 h-4" />
-                    </Button>
-                    
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleSeek(10)}
-                      className="text-white hover:bg-white/20"
-                    >
-                      <SkipForward className="w-4 h-4" />
-                    </Button>
-                    
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 text-sm">
-                        <span>{formatTime(currentTime)}</span>
-                        <div className="flex-1">
-                          <Progress value={(currentTime / duration) * 100} className="h-1" />
-                        </div>
-                        <span>{formatTime(duration)}</span>
-                      </div>
+                      <div 
+                        className="h-full bg-orange-500 rounded-full transition-all"
+                        style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                      />
                     </div>
                     
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-white hover:bg-white/20"
-                    >
-                      <Volume2 className="w-5 h-5" />
-                    </Button>
-                    
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => videoRef.current?.requestFullscreen()}
-                      className="text-white hover:bg-white/20"
-                    >
-                      <Maximize className="w-5 h-5" />
-                    </Button>
+                    {/* Contrôles */}
+                    <div className="flex items-center justify-between text-white">
+                      <div className="flex items-center space-x-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={togglePlay}
+                          className="text-white hover:bg-white/20"
+                        >
+                          {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                        </Button>
+                        
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleSeek(-10)}
+                          className="text-white hover:bg-white/20"
+                        >
+                          <SkipBack className="w-4 h-4" />
+                        </Button>
+                        
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleSeek(10)}
+                          className="text-white hover:bg-white/20"
+                        >
+                          <SkipForward className="w-4 h-4" />
+                        </Button>
+
+                        <div className="flex items-center space-x-2 text-sm">
+                          <span>{formatTime(currentTime)}</span>
+                          <span>/</span>
+                          <span>{formatTime(duration)}</span>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center space-x-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-white hover:bg-white/20"
+                        >
+                          <Volume2 className="w-5 h-5" />
+                        </Button>
+                        
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={handleFullscreen}
+                          className="text-white hover:bg-white/20"
+                        >
+                          <Maximize className="w-5 h-5" />
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -359,10 +441,15 @@ export default function ModuleDetailPage() {
               <CardContent>
                 <div className="space-y-4">
                   <div className="flex justify-between text-sm">
-                    <span>Temps regardé</span>
+                    <span>Progression</span>
                     <span className="font-semibold">{Math.round(localProgress)}%</span>
                   </div>
                   <Progress value={localProgress} className="h-3" />
+                  
+                  <div className="flex justify-between text-sm text-gray-600">
+                    <span>Temps regardé: {formatTime(currentTime)}</span>
+                    <span>Durée totale: {formatTime(duration)}</span>
+                  </div>
                   
                   {module.isCompleted && (
                     <div className="flex items-center text-green-600 font-semibold">
@@ -396,14 +483,14 @@ export default function ModuleDetailPage() {
                 
                 <div className="flex items-center text-sm text-gray-500 mb-4">
                   <Clock className="w-4 h-4 mr-1" />
-                 {formatDuration(module.duration)}
+                  {formatDuration(module.duration)}
                 </div>
 
                 <Separator className="my-4" />
 
                 <h4 className="font-semibold text-blue-900 mb-3">Objectifs d'apprentissage</h4>
                 <ul className="space-y-2">
-                  {(module.objectives || []).map((objective, index) => (
+                  {(module.objectives || ['Pas d\'objectifs définis']).map((objective, index) => (
                     <li key={index} className="flex items-start">
                       <CheckCircle className="w-4 h-4 text-green-500 mr-2 mt-0.5 flex-shrink-0" />
                       <span className="text-sm text-gray-600">{objective}</span>
@@ -413,6 +500,7 @@ export default function ModuleDetailPage() {
               </CardContent>
             </Card>
 
+            {/* Actions du module */}
             <Card>
               <CardContent className="pt-6">
                 <div className="space-y-3">
@@ -447,6 +535,7 @@ export default function ModuleDetailPage() {
               </CardContent>
             </Card>
 
+            {/* Navigation */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Navigation</CardTitle>
@@ -493,6 +582,7 @@ export default function ModuleDetailPage() {
           </div>
         </div>
 
+        {/* Contenu détaillé */}
         <Card className="mt-8">
           <CardHeader>
             <CardTitle className="flex items-center">
@@ -503,7 +593,9 @@ export default function ModuleDetailPage() {
           <CardContent>
             <div 
               className="prose max-w-none"
-              dangerouslySetInnerHTML={{ __html: module.content || '<p>Contenu du module à venir...</p>' }}
+              dangerouslySetInnerHTML={{ 
+                __html: module.content || '<p class="text-gray-600">Contenu du module à venir...</p>' 
+              }}
             />
           </CardContent>
         </Card>
