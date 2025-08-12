@@ -77,7 +77,7 @@ export default function SupportPage() {
     },
     {
       question: "Comment contacter le support technique ?",
-      answer: "Vous pouvez nous contacter via le formulaire ci-dessous, par email à support@eglise-celeste.org, ou par téléphone au +225 07 00 00 00 00."
+      answer: "Vous pouvez nous contacter via le formulaire ci-dessous, par email à support@eglise-celeste.org, ou par téléphone au +229 01 00 00 00 00."
     }
   ]
 
@@ -189,7 +189,7 @@ export default function SupportPage() {
                   <Phone className="w-5 h-5 text-blue-600" />
                   <div>
                     <p className="font-medium">Téléphone</p>
-                    <p className="text-sm text-gray-600">+225 07 00 00 00 00</p>
+                    <p className="text-sm text-gray-600">+229 01 00 00 00 00</p>
                   </div>
                 </div>
                 <div className="bg-blue-50 p-3 rounded-lg">

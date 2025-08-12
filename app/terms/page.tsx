@@ -258,9 +258,9 @@ export default function TermsPage() {
             </CardHeader>
             <CardContent>
               <p className="text-gray-600 mb-4">
-                Ces conditions d'utilisation sont régies par le droit ivoirien. Tout litige relatif à 
+                Ces conditions d'utilisation sont régies par le droit beninois. Tout litige relatif à 
                 l'utilisation de cette plateforme sera soumis à la juridiction exclusive des tribunaux 
-                d'Abidjan, Côte d'Ivoire.
+                compétents de Cotonou, Bénin.
               </p>
               <p className="text-gray-600">
                 En cas de conflit entre les versions française et anglaise de ces conditions, la version 
@@ -283,8 +283,8 @@ export default function TermsPage() {
               </p>
               <div className="bg-gray-50 p-4 rounded-lg">
                 <p><strong>Email :</strong> legal@eglise-celeste.org</p>
-                <p><strong>Téléphone :</strong> +225 07 00 00 00 00</p>
-                <p><strong>Adresse :</strong> Abidjan, Côte d'Ivoire - Cocody Riviera Palmeraie</p>
+                <p><strong>Téléphone :</strong> +229 01 00 00 00 00</p>
+                <p><strong>Adresse :</strong> Benin cotonou </p>
               </div>
             </CardContent>
           </Card>

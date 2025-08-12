@@ -260,8 +260,8 @@ export default function PrivacyPage() {
               </p>
               <div className="bg-gray-50 p-4 rounded-lg">
                 <p><strong>Email :</strong> privacy@eglise-celeste.org</p>
-                <p><strong>Téléphone :</strong> +225 07 00 00 00 00</p>
-                <p><strong>Adresse :</strong> Abidjan, Côte d'Ivoire - Cocody Riviera Palmeraie</p>
+                <p><strong>Téléphone :</strong> +229 001 00 00 00 00</p>
+                <p><strong>Adresse :</strong> Benin cotonou rue 0000</p>
               </div>
             </CardContent>
           </Card>

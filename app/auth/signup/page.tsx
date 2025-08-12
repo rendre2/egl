@@ -219,7 +219,7 @@ export default function SignUpPage() {
                       id="ville"
                       name="ville"
                       type="text"
-                      placeholder="Abidjan"
+                      placeholder="Cotonou"
                       value={formData.ville}
                       onChange={handleChange}
                       className="pl-10"
