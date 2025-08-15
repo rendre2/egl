@@ -331,15 +331,10 @@ export default function ModulesPage() {
                     alt={module.title}
                     className="w-full h-64 object-cover"
                   />
-                  <div className="absolute inset-0 bg-black bg-opacity-50" />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-center text-white">
-                      <Badge className="mb-4 bg-white/20 text-white">
-                        Module {module.order}
-                      </Badge>
-                      <h2 className="text-3xl font-bold mb-2">{module.title}</h2>
-                      <p className="text-lg opacity-90 max-w-2xl">{module.description}</p>
-                    </div>
+                  <div className="absolute top-4 left-4">
+                    <Badge className="bg-white/90 text-blue-900 backdrop-blur-sm">
+                      Module {module.order}
+                    </Badge>
                   </div>
                   <div className="absolute top-4 right-4">
                     {module.isCompleted ? (
@@ -362,6 +357,12 @@ export default function ModulesPage() {
                 </div>
 
                 <CardContent className="p-6">
+                  {/* Titre et description du module */}
+                  <div className="mb-6">
+                    <h2 className="text-2xl font-bold text-blue-900 mb-3">{module.title}</h2>
+                    <p className="text-gray-600 text-lg leading-relaxed">{module.description}</p>
+                  </div>
+
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center space-x-4">
                       <div className="flex items-center text-gray-500 text-sm">
