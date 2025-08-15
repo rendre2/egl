@@ -623,7 +623,7 @@ export default function ContentDetailPage() {
                   ) : (
                     <Button variant="outline" className="w-full justify-start" disabled>
                       Suivant
-                      <ArrowRight className="w-4 h-4 ml-2" />
+                      <ArrowRight className="w-4 h-4 ml-2"/>
                     </Button>
                   )}
                 </div>
