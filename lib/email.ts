@@ -132,7 +132,7 @@ export async function sendWelcomeEmail(email: string, name: string) {
           <p>Votre compte est maintenant activé et vous pouvez commencer votre parcours de formation spirituelle. Nous sommes ravis de vous accompagner dans cette belle aventure de foi.</p>
           
           <div style="background: #dbeafe; padding: 20px; border-radius: 8px; margin: 20px 0;">
-            <h3 style="color: #1e40af; margin-top: 0;">🚀 Prochaines étapes :</h3>
+            <h3 style="color: #1e40af; margin-top: 0;">Prochaines étapes :</h3>
             <ul style="color: #1e40af; padding-left: 20px;">
               <li>Connectez-vous à votre compte</li>
               <li>Explorez nos modules de formation</li>
@@ -152,7 +152,7 @@ export async function sendWelcomeEmail(email: string, name: string) {
           
           <div style="background: #fef3c7; padding: 15px; border-radius: 8px; margin: 20px 0;">
             <p style="margin: 0; color: #92400e; font-size: 14px;">
-              💡 <strong>Conseil :</strong> Nous recommandons de suivre les modules dans l'ordre pour une progression optimale. Chaque module se débloque après validation du précédent.
+              <strong>Conseil :</strong> Nous recommandons de suivre les modules dans l'ordre pour une progression optimale. Chaque module se débloque après validation du précédent.
             </p>
           </div>
           

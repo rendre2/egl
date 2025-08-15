@@ -72,9 +72,13 @@ export default function ContentDetailPage() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  const [volume, setVolume] = useState(1)
   const [localProgress, setLocalProgress] = useState(0)
   const [updateInProgress, setUpdateInProgress] = useState(false)
-  const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement>(null)
+  const [mediaError, setMediaError] = useState<string | null>(null)
+  
+  // Utiliser une ref générique pour les deux types de média
+  const mediaRef = useRef<HTMLVideoElement & HTMLAudioElement>(null)
   const progressUpdateInterval = useRef<NodeJS.Timeout | null>(null)
 
   // Redirection si non connecté
@@ -115,7 +119,7 @@ export default function ContentDetailPage() {
     }
   }, [session, params.id, router])
 
-  // Fonction pour mettre à jour la progression
+  // Fonction pour mettre à jour la progression (simplifiée)
   const updateProgress = async (watchTime: number) => {
     if (updateInProgress || !content) return
     
@@ -141,83 +145,150 @@ export default function ContentDetailPage() {
     }
   }
 
-  // Gestion du lecteur média
+  // Configuration du média player (corrigée)
   useEffect(() => {
     const media = mediaRef.current
     if (!media || !content) return
 
-    const updateTime = () => {
+    console.log('Configuration du média player pour:', content.type, content.url)
+
+    const handleLoadedMetadata = () => {
+      console.log('Métadonnées chargées, durée:', media.duration)
+      setDuration(media.duration)
+      setMediaError(null)
+      
+      // Reprendre là où l'utilisateur s'était arrêté
+      if (content.watchTime > 0 && content.watchTime < media.duration) {
+        media.currentTime = content.watchTime
+        console.log('Position restaurée à:', content.watchTime)
+      }
+    }
+
+    const handleTimeUpdate = () => {
       const current = media.currentTime
       setCurrentTime(current)
       
       if (media.duration > 0) {
         const progress = (current / media.duration) * 100
         setLocalProgress(progress)
-        
-        // Marquer comme complété à 100% uniquement
-        if (progress >= 100 && !content.isCompleted) {
-          setContent(prev => prev ? { ...prev, isCompleted: true } : null)
-          updateProgress(current)
-          toast.success('Contenu terminé ! Vous pouvez passer au suivant.')
-        }
       }
     }
 
-    const updateDuration = () => {
-      setDuration(media.duration)
-      // Reprendre là où l'utilisateur s'était arrêté
-      if (content.watchTime > 0) {
-        media.currentTime = content.watchTime
-      }
+    const handlePlay = () => {
+      console.log('Lecture démarrée')
+      setIsPlaying(true)
+      setMediaError(null)
+    }
+    
+    const handlePause = () => {
+      console.log('Lecture mise en pause')
+      setIsPlaying(false)
     }
 
-    const handlePlay = () => setIsPlaying(true)
-    const handlePause = () => setIsPlaying(false)
+    const handleError = (e: Event) => {
+      console.error('Erreur média:', e)
+      const target = e.target as HTMLMediaElement
+      setMediaError(`Erreur de lecture: ${target.error?.message || 'Format non supporté'}`)
+      setIsPlaying(false)
+    }
 
-    media.addEventListener('timeupdate', updateTime)
-    media.addEventListener('loadedmetadata', updateDuration)
+    const handleLoadStart = () => {
+      console.log('Début du chargement du média')
+      setMediaError(null)
+    }
+
+    const handleCanPlay = () => {
+      console.log('Le média peut être lu')
+      setMediaError(null)
+    }
+
+    // Ajouter les event listeners
+    media.addEventListener('loadedmetadata', handleLoadedMetadata)
+    media.addEventListener('timeupdate', handleTimeUpdate)
     media.addEventListener('play', handlePlay)
     media.addEventListener('pause', handlePause)
+    media.addEventListener('error', handleError)
+    media.addEventListener('loadstart', handleLoadStart)
+    media.addEventListener('canplay', handleCanPlay)
 
-    // Mise à jour périodique de la progression
-    progressUpdateInterval.current = setInterval(() => {
-      if (isPlaying && media.currentTime > 0) {
-        updateProgress(media.currentTime)
-      }
-    }, 10000) // Toutes les 10 secondes
+    // Configuration initiale
+    media.volume = volume
+    media.preload = 'metadata'
 
+    // Nettoyage
     return () => {
-      media.removeEventListener('timeupdate', updateTime)
-      media.removeEventListener('loadedmetadata', updateDuration)
+      media.removeEventListener('loadedmetadata', handleLoadedMetadata)
+      media.removeEventListener('timeupdate', handleTimeUpdate)
       media.removeEventListener('play', handlePlay)
       media.removeEventListener('pause', handlePause)
+      media.removeEventListener('error', handleError)
+      media.removeEventListener('loadstart', handleLoadStart)
+      media.removeEventListener('canplay', handleCanPlay)
       
       if (progressUpdateInterval.current) {
         clearInterval(progressUpdateInterval.current)
       }
+    }
+  }, [content, volume])
+
+  // Mise à jour périodique de la progression (séparée)
+  useEffect(() => {
+    if (isPlaying && currentTime > 0) {
+      if (progressUpdateInterval.current) {
+        clearInterval(progressUpdateInterval.current)
+      }
       
-      // Sauvegarder la progression avant de quitter
-      if (media.currentTime > 0) {
-        updateProgress(media.currentTime)
+      progressUpdateInterval.current = setInterval(() => {
+        if (mediaRef.current && isPlaying) {
+          updateProgress(mediaRef.current.currentTime)
+        }
+      }, 10000) // Toutes les 10 secondes
+    } else {
+      if (progressUpdateInterval.current) {
+        clearInterval(progressUpdateInterval.current)
       }
     }
-  }, [content, isPlaying, localProgress])
 
-  const togglePlay = () => {
+    return () => {
+      if (progressUpdateInterval.current) {
+        clearInterval(progressUpdateInterval.current)
+      }
+    }
+  }, [isPlaying, currentTime])
+
+  // Contrôles du lecteur
+  const togglePlay = async () => {
     const media = mediaRef.current
     if (!media) return
 
-    if (isPlaying) {
-      media.pause()
-    } else {
-      media.play()
+    try {
+      if (isPlaying) {
+        media.pause()
+      } else {
+        await media.play()
+      }
+    } catch (error) {
+      console.error('Erreur lors de la lecture:', error)
+      setMediaError('Impossible de lire le média')
     }
   }
 
   const handleSeek = (seconds: number) => {
     const media = mediaRef.current
-    if (!media) return
-    media.currentTime = Math.max(0, media.currentTime + seconds)
+    if (!media || !duration) return
+    
+    const newTime = Math.max(0, Math.min(duration, media.currentTime + seconds))
+    media.currentTime = newTime
+  }
+
+  const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const media = mediaRef.current
+    if (!media || !duration) return
+
+    const rect = e.currentTarget.getBoundingClientRect()
+    const percent = (e.clientX - rect.left) / rect.width
+    const newTime = percent * duration
+    media.currentTime = newTime
   }
 
   const formatTime = (time: number) => {
@@ -281,91 +352,142 @@ export default function ContentDetailPage() {
           <div className="lg:col-span-2">
             <Card className="overflow-hidden shadow-xl">
               <div className="relative bg-black">
+                {/* Affichage d'erreur si problème de lecture */}
+                {mediaError && (
+                  <div className="absolute inset-0 bg-red-900/90 flex items-center justify-center z-10">
+                    <div className="text-center text-white p-6">
+                      <div className="text-6xl mb-4">⚠️</div>
+                      <h3 className="text-xl font-bold mb-2">Erreur de lecture</h3>
+                      <p className="text-sm opacity-90">{mediaError}</p>
+                      <Button 
+                        className="mt-4" 
+                        variant="secondary"
+                        onClick={() => {
+                          setMediaError(null)
+                          if (mediaRef.current) {
+                            mediaRef.current.load()
+                          }
+                        }}
+                      >
+                        Réessayer
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 {content.type === 'VIDEO' ? (
                   <video
-                    ref={mediaRef as React.RefObject<HTMLVideoElement>}
+                    ref={mediaRef}
                     src={content.url}
                     className="w-full aspect-video"
                     preload="metadata"
-                    controls
-                  />
+                    playsInline
+                    // Supprimer les contrôles natifs pour utiliser les nôtres
+                    // controls
+                  >
+                    Votre navigateur ne supporte pas la lecture vidéo.
+                  </video>
                 ) : (
                   <div className="w-full aspect-video bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center">
                     <div className="text-center text-white">
                       <Headphones className="w-24 h-24 mx-auto mb-4 opacity-50" />
-                      <h3 className="text-2xl font-bold mb-2">{content.title}</h3>
+                      <h3 className="text-2xl font-bold mb-4">{content.title}</h3>
                       <audio
-                        ref={mediaRef as React.RefObject<HTMLAudioElement>}
+                        ref={mediaRef}
                         src={content.url}
-                        className="w-full max-w-md"
-                        controls
                         preload="metadata"
-                      />
+                        className="hidden"
+                      >
+                        Votre navigateur ne supporte pas la lecture audio.
+                      </audio>
                     </div>
                   </div>
                 )}
                 
-                {content.type === 'VIDEO' && (
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
-                    <div className="flex items-center space-x-4 text-white">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={togglePlay}
-                        className="text-white hover:bg-white/20"
-                      >
-                        {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-                      </Button>
-                      
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleSeek(-10)}
-                        className="text-white hover:bg-white/20"
-                      >
-                        <SkipBack className="w-4 h-4" />
-                      </Button>
-                      
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleSeek(10)}
-                        className="text-white hover:bg-white/20"
-                      >
-                        <SkipForward className="w-4 h-4" />
-                      </Button>
-                      
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2 text-sm">
-                          <span>{formatTime(currentTime)}</span>
-                          <div className="flex-1">
-                            <Progress value={(currentTime / duration) * 100} className="h-1" />
-                          </div>
-                          <span>{formatTime(duration)}</span>
-                        </div>
-                      </div>
-                      
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-white hover:bg-white/20"
-                      >
-                        <Volume2 className="w-5 h-5" />
-                      </Button>
-                      
-                      {content.type === 'VIDEO' && (
+                {/* Contrôles personnalisés */}
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-4">
+                  <div className="space-y-2">
+                    {/* Barre de progression cliquable */}
+                    <div 
+                      className="w-full h-2 bg-white/20 rounded-full cursor-pointer"
+                      onClick={handleProgressClick}
+                    >
+                      <div 
+                        className="h-full bg-orange-500 rounded-full transition-all duration-300"
+                        style={{ width: `${(currentTime / duration) * 100}%` }}
+                      />
+                    </div>
+                    
+                    <div className="flex items-center justify-between text-white">
+                      <div className="flex items-center space-x-3">
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => (mediaRef.current as HTMLVideoElement)?.requestFullscreen()}
+                          onClick={togglePlay}
                           className="text-white hover:bg-white/20"
                         >
-                          <Maximize className="w-5 h-5" />
+                          {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
                         </Button>
-                      )}
+                        
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleSeek(-10)}
+                          className="text-white hover:bg-white/20"
+                        >
+                          <SkipBack className="w-4 h-4" />
+                        </Button>
+                        
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleSeek(10)}
+                          className="text-white hover:bg-white/20"
+                        >
+                          <SkipForward className="w-4 h-4" />
+                        </Button>
+                      </div>
+
+                      <div className="flex items-center space-x-4 text-sm">
+                        <span>{formatTime(currentTime)} / {formatTime(duration)}</span>
+                        
+                        <div className="flex items-center space-x-2">
+                          <Volume2 className="w-4 h-4" />
+                          <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.1"
+                            value={volume}
+                            onChange={(e) => {
+                              const newVolume = parseFloat(e.target.value)
+                              setVolume(newVolume)
+                              if (mediaRef.current) {
+                                mediaRef.current.volume = newVolume
+                              }
+                            }}
+                            className="w-16"
+                          />
+                        </div>
+                        
+                        {content.type === 'VIDEO' && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              if (mediaRef.current && 'requestFullscreen' in mediaRef.current) {
+                                (mediaRef.current as any).requestFullscreen()
+                              }
+                            }}
+                            className="text-white hover:bg-white/20"
+                          >
+                            <Maximize className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </div>
-                )}
+                </div>
               </div>
             </Card>
 
@@ -437,6 +559,14 @@ export default function ContentDetailPage() {
                   <div>
                     Chapitre {content.chapter.order}: {content.chapter.title}
                   </div>
+                </div>
+                
+                {/* Informations de debug */}
+                <div className="mt-4 p-3 bg-gray-100 rounded text-xs text-gray-600">
+                  <div><strong>URL:</strong> {content.url}</div>
+                  <div><strong>État:</strong> {isPlaying ? 'En cours' : 'En pause'}</div>
+                  <div><strong>Temps:</strong> {formatTime(currentTime)} / {formatTime(duration)}</div>
+                  <div><strong>Progression:</strong> {Math.round(localProgress)}%</div>
                 </div>
               </CardContent>
             </Card>
