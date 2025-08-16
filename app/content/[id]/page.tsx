@@ -121,27 +121,105 @@ export default function ContentDetailPage() {
     }
   }, [session, params.id, router])
 
+  // Fonction pour convertir l'URL Google Drive en URL de streaming direct
+  const convertGoogleDriveUrl = (url: string): string => {
+    if (!url) return url
+    
+    // Patterns d'URLs Google Drive
+    const patterns = [
+      // https://drive.google.com/file/d/FILE_ID/view
+      /https:\/\/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)\/view/,
+      // https://drive.google.com/open?id=FILE_ID
+      /https:\/\/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/,
+      // https://docs.google.com/...
+      /https:\/\/docs\.google\.com\/.*\/d\/([a-zA-Z0-9_-]+)/
+    ]
+    
+    for (const pattern of patterns) {
+      const match = url.match(pattern)
+      if (match) {
+        const fileId = match[1]
+        // Convertir en URL de streaming direct
+        return `https://drive.google.com/uc?export=download&id=${fileId}`
+      }
+    }
+    
+    // Si c'est déjà une URL de streaming direct, la retourner
+    if (url.includes('drive.google.com/uc?')) {
+      return url
+    }
+    
+    // Pour les autres URLs (externes, locales, etc.)
+    return url
+  }
+
+  // Fonction pour créer une URL sécurisée pour les médias
+  const createSecureMediaUrl = (originalUrl: string): string => {
+    if (!originalUrl) return originalUrl
+    
+    // Convertir les URLs Google Drive en premier
+    const convertedUrl = convertGoogleDriveUrl(originalUrl)
+    
+    // Si c'est une URL externe (Google Drive ou autre), la retourner directement
+    if (convertedUrl.startsWith('http://') || convertedUrl.startsWith('https://')) {
+      return convertedUrl
+    }
+    
+    // Si c'est un fichier local, utiliser l'API route
+    if (convertedUrl.startsWith('/uploads/') || convertedUrl.startsWith('uploads/')) {
+      const cleanPath = convertedUrl.replace(/^\/uploads\//, '').replace(/^uploads\//, '')
+      return `/api/media/${cleanPath}`
+    }
+    
+    // Pour les autres chemins locaux
+    if (convertedUrl.startsWith('/')) {
+      return convertedUrl
+    }
+    
+    return `/${convertedUrl}`
+  }
+
+  // Fonction pour normaliser l'URL du média pour Next.js
+  const normalizeMediaUrl = (url: string): string => {
+    if (!url) return url
+    
+    return createSecureMediaUrl(url)
+  }
+
   // Fonction pour valider l'URL du média
   const validateMediaUrl = (url: string, type: 'VIDEO' | 'AUDIO'): boolean => {
     if (!url) return false
     
-    // Vérifier si c'est une URL valide
-    try {
-      new URL(url)
-    } catch {
-      console.error('URL invalide:', url)
-      return false
+    // Normaliser l'URL
+    const normalizedUrl = normalizeMediaUrl(url)
+    
+    // Pour les URLs Google Drive, pas besoin de valider l'extension
+    if (normalizedUrl.includes('drive.google.com')) {
+      return true
+    }
+    
+    // Pour les URLs externes, vérifier la validité
+    if (normalizedUrl.startsWith('http')) {
+      try {
+        new URL(normalizedUrl)
+        return true
+      } catch {
+        console.error('URL invalide:', normalizedUrl)
+        return false
+      }
     }
 
-    // Vérifier les extensions supportées
-    const videoExtensions = ['.mp4', '.webm', '.ogg', '.mov', '.avi']
-    const audioExtensions = ['.mp3', '.wav', '.ogg', '.m4a', '.aac']
+    // Vérifier les extensions supportées pour les fichiers locaux
+    const videoExtensions = ['.mp4', '.webm', '.ogg']
+    const audioExtensions = ['.mp3', '.wav', '.ogg', '.m4a']
     
     const extensions = type === 'VIDEO' ? videoExtensions : audioExtensions
-    const hasValidExtension = extensions.some(ext => url.toLowerCase().includes(ext))
+    const hasValidExtension = extensions.some(ext => normalizedUrl.toLowerCase().includes(ext))
     
     if (!hasValidExtension) {
-      console.warn('Extension non reconnue pour:', url)
+      console.warn('Extension non reconnue pour:', normalizedUrl)
+      // Pour Google Drive, accepter même sans extension visible
+      return normalizedUrl.includes('drive.google.com')
     }
     
     return true
@@ -190,13 +268,14 @@ export default function ContentDetailPage() {
     const media = mediaRef.current
     if (!media || !content) return
 
-    // Valider l'URL avant de continuer
-    if (!validateMediaUrl(content.url, content.type)) {
+    // Normaliser et valider l'URL
+    const normalizedUrl = normalizeMediaUrl(content.url)
+    if (!validateMediaUrl(normalizedUrl, content.type)) {
       setMediaError('Format de fichier non supporté ou URL invalide')
       return
     }
 
-    console.log('Configuration du média player pour:', content.type, content.url)
+    console.log('Configuration du média player pour:', content.type, normalizedUrl)
     setMediaLoading(true)
 
     const handleLoadStart = () => {
@@ -256,20 +335,26 @@ export default function ContentDetailPage() {
       if (target.error) {
         switch (target.error.code) {
           case MediaError.MEDIA_ERR_ABORTED:
-            errorMessage = 'Lecture interrompue'
+            errorMessage = 'Lecture interrompue par l\'utilisateur'
             break
           case MediaError.MEDIA_ERR_NETWORK:
-            errorMessage = 'Erreur réseau - Vérifiez votre connexion'
+            errorMessage = 'Erreur réseau - Vérifiez votre connexion internet'
             break
           case MediaError.MEDIA_ERR_DECODE:
-            errorMessage = 'Erreur de décodage - Format non supporté'
+            errorMessage = 'Format de fichier non supporté par ce navigateur'
             break
           case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-            errorMessage = 'Format ou source non supporté'
+            errorMessage = 'Source média non disponible ou format non supporté'
             break
           default:
-            errorMessage = `Erreur inconnue (${target.error.code})`
+            errorMessage = `Erreur inconnue (Code: ${target.error.code})`
         }
+        console.error('Détails de l\'erreur média:', {
+          code: target.error.code,
+          message: target.error.message,
+          url: content.url,
+          normalizedUrl: normalizedUrl
+        })
       }
       
       setMediaError(errorMessage)
@@ -465,10 +550,21 @@ export default function ContentDetailPage() {
                 {/* Affichage d'erreur si problème de lecture */}
                 {mediaError && (
                   <div className="absolute inset-0 bg-red-900/90 flex items-center justify-center z-10">
-                    <div className="text-center text-white p-6">
+                    <div className="text-center text-white p-6 max-w-md">
                       <div className="text-6xl mb-4">⚠️</div>
                       <h3 className="text-xl font-bold mb-2">Erreur de lecture</h3>
                       <p className="text-sm opacity-90 mb-4">{mediaError}</p>
+                      {content.url.includes('drive.google.com') && (
+                        <div className="bg-yellow-600/20 p-3 rounded mb-4 text-xs">
+                          <p><strong>Astuce Google Drive :</strong></p>
+                          <p>Assurez-vous que le fichier est :</p>
+                          <ul className="text-left mt-2 space-y-1">
+                            <li>• Partagé publiquement</li>
+                            <li>• En format MP4 pour les vidéos</li>
+                            <li>• En format MP3 pour les audios</li>
+                          </ul>
+                        </div>
+                      )}
                       <div className="space-y-2">
                         <Button 
                           className="mr-2" 
@@ -489,11 +585,12 @@ export default function ContentDetailPage() {
                 {content.type === 'VIDEO' ? (
                   <video
                     ref={mediaRef}
-                    src={content.url}
+                    src={normalizeMediaUrl(content.url)}
                     className="w-full aspect-video"
                     preload="metadata"
                     playsInline
-                    crossOrigin="anonymous"
+                    muted={false}
+                    controls={false}
                   >
                     <p>Votre navigateur ne supporte pas la lecture vidéo.</p>
                     <p>URL: {content.url}</p>
@@ -505,9 +602,8 @@ export default function ContentDetailPage() {
                       <h3 className="text-2xl font-bold mb-4">{content.title}</h3>
                       <audio
                         ref={mediaRef}
-                        src={content.url}
+                        src={normalizeMediaUrl(content.url)}
                         preload="metadata"
-                        crossOrigin="anonymous"
                         className="hidden"
                       >
                         <p>Votre navigateur ne supporte pas la lecture audio.</p>
@@ -679,7 +775,9 @@ export default function ContentDetailPage() {
                 
                 {/* Informations de debug */}
                 <div className="mt-4 p-3 bg-gray-100 rounded text-xs text-gray-600">
-                  <div><strong>URL:</strong> {content.url}</div>
+                  <div><strong>URL originale:</strong> {content.url}</div>
+                  <div><strong>URL convertie:</strong> {normalizeMediaUrl(content.url)}</div>
+                  <div><strong>Type:</strong> {content.url.includes('drive.google.com') ? 'Google Drive' : 'Autre'}</div>
                   <div><strong>État:</strong> {isPlaying ? 'En cours' : 'En pause'}</div>
                   <div><strong>Temps:</strong> {formatTime(currentTime)} / {formatTime(duration)}</div>
                   <div><strong>Progression:</strong> {Math.round(localProgress)}%</div>
