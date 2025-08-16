@@ -199,7 +199,7 @@ export default function SignUpPage() {
                       id="telephone"
                       name="telephone"
                       type="tel"
-                      placeholder="+225 07 00 00 00 00"
+                      placeholder="+229 01 00 00 00 00"
                       value={formData.telephone}
                       onChange={handleChange}
                       className="pl-10"
