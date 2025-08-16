@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { signIn } from 'next-auth/react'
+import { signIn, getProviders } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -86,10 +86,44 @@ export default function SignUpPage() {
 
   const handleGoogleSignUp = async () => {
     setIsLoading(true)
+    
     try {
-      await signIn('google', { callbackUrl: '/modules' })
+      console.log('Tentative de connexion Google...')
+      console.log('Current URL:', window.location.origin)
+      
+      // Utiliser signIn avec les bonnes options pour Vercel
+      const result = await signIn('google', {
+        callbackUrl: `${window.location.origin}/modules`,
+        redirect: false // Important pour gérer les erreurs proprement
+      })
+      
+      console.log('Résultat signIn Google:', result)
+      
+      if (result?.error) {
+        console.error('Erreur OAuth Google:', result.error)
+        
+        // Messages d'erreur plus spécifiques
+        let errorMessage = 'Erreur lors de l\'inscription avec Google'
+        
+        if (result.error.includes('OAuthCallback')) {
+          errorMessage = 'Erreur de configuration OAuth. Contactez le support.'
+        } else if (result.error.includes('AccessDenied')) {
+          errorMessage = 'Accès refusé. Veuillez réessayer.'
+        }
+        
+        toast.error(errorMessage)
+      } else if (result?.url) {
+        // Redirection réussie
+        console.log('Redirection vers:', result.url)
+        router.push(result.url)
+      } else {
+        // Fallback - redirection manuelle
+        window.location.href = `/modules`
+      }
     } catch (error) {
-      toast.error('Erreur lors de l\'inscription avec Google')
+      console.error('Erreur Google SignUp:', error)
+      toast.error('Erreur lors de l\'inscription avec Google. Veuillez réessayer.')
+    } finally {
       setIsLoading(false)
     }
   }
@@ -346,7 +380,7 @@ export default function SignUpPage() {
                   d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
                 />
               </svg>
-              Google
+              {isLoading ? 'Connexion...' : 'Google'}
             </Button>
 
             <div className="text-center text-sm">

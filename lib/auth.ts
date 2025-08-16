@@ -5,12 +5,36 @@ import { PrismaAdapter } from '@next-auth/prisma-adapter'
 import { prisma } from './prisma'
 import bcrypt from 'bcryptjs'
 
+// Fonction utilitaire pour obtenir l'URL de base
+function getBaseUrl() {
+  // En production Vercel
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`
+  }
+  
+  // Si NEXTAUTH_URL est définie
+  if (process.env.NEXTAUTH_URL) {
+    return process.env.NEXTAUTH_URL
+  }
+  
+  // Fallback pour développement local
+  return 'http://localhost:3000'
+}
+
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      authorization: {
+        params: {
+          prompt: "consent",
+          access_type: "offline",
+          response_type: "code",
+          scope: "openid email profile"
+        }
+      },
       profile(profile) {
         return {
           id: profile.sub,
@@ -155,7 +179,38 @@ export const authOptions: NextAuthOptions = {
       }
       return session
     },
+    async redirect({ url, baseUrl }) {
+      console.log('NextAuth redirect - url:', url, 'baseUrl:', baseUrl)
+      
+      // Utiliser l'URL de base dynamique pour Vercel
+      const dynamicBaseUrl = getBaseUrl()
+      
+      // Si l'URL commence par /, c'est une redirection relative
+      if (url.startsWith("/")) {
+        return `${dynamicBaseUrl}${url}`
+      }
+      
+      // Si l'URL est sur le même domaine que notre base URL
+      try {
+        const urlObj = new URL(url)
+        const baseUrlObj = new URL(dynamicBaseUrl)
+        
+        if (urlObj.origin === baseUrlObj.origin) {
+          return url
+        }
+      } catch (error) {
+        console.error('Erreur lors du parsing URL:', error)
+      }
+      
+      // Sinon, rediriger vers la page d'accueil
+      return `${dynamicBaseUrl}/modules`
+    },
     async signIn({ user, account, profile }) {
+      console.log('NextAuth signIn callback:', { 
+        provider: account?.provider, 
+        email: user?.email 
+      })
+      
       // Pour Google OAuth
       if (account?.provider === 'google') {
         try {
@@ -165,10 +220,12 @@ export const authOptions: NextAuthOptions = {
 
           // Si l'utilisateur existe déjà avec un autre provider, permettre la connexion
           if (existingUser) {
+            console.log('Utilisateur Google existant trouvé:', existingUser.email)
             return true
           }
 
           // Sinon, l'utilisateur sera créé automatiquement par l'adapter
+          console.log('Nouvel utilisateur Google à créer:', user.email)
           return true
         } catch (error) {
           console.error('Erreur lors de la vérification Google Sign-In:', error)
@@ -196,6 +253,42 @@ export const authOptions: NextAuthOptions = {
     signIn: '/auth/signin',
     error: '/auth/error'
   },
+  
+  // Configuration pour Vercel
+  useSecureCookies: process.env.NODE_ENV === "production",
+  
+  // Configuration des cookies optimisée pour Vercel
+  cookies: {
+    sessionToken: {
+      name: process.env.NODE_ENV === "production" 
+        ? "__Secure-next-auth.session-token" 
+        : "next-auth.session-token",
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NODE_ENV === "production"
+      }
+    }
+  },
+  
+  // Debug uniquement en développement
   debug: process.env.NODE_ENV === 'development',
+  
+  // Logger pour production
+  logger: {
+    error(code, metadata) {
+      console.error('NextAuth Error:', code, metadata)
+    },
+    warn(code) {
+      console.warn('NextAuth Warning:', code)
+    },
+    debug(code, metadata) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('NextAuth Debug:', code, metadata)
+      }
+    }
+  },
+  
   secret: process.env.NEXTAUTH_SECRET,
 }
