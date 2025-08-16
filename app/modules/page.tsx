@@ -72,6 +72,7 @@ interface ApiResponse {
   userStats?: UserStats
   message?: string
   emailNotVerified?: boolean
+  error?: string
 }
 
 export default function ModulesPage() {
@@ -95,14 +96,14 @@ export default function ModulesPage() {
           toast.error('Veuillez vérifier votre email avant d\'accéder aux modules')
           return
         }
-        throw new Error(errorData.message || 'Erreur lors de la récupération des modules')
+        throw new Error(errorData.message || errorData.error || 'Erreur lors de la récupération des modules')
       }
       const data: ApiResponse = await response.json()
       if (data.success) {
         setModules(data.modules || [])
         setUserStats(data.userStats || null)
       } else {
-        throw new Error(data.message || 'Erreur lors de la récupération des modules')
+        throw new Error(data.message || data.error || 'Erreur lors de la récupération des modules')
       }
     } catch (error) {
       console.error('Erreur lors du chargement des modules:', error)
@@ -114,12 +115,14 @@ export default function ModulesPage() {
   }
 
   const formatDuration = (seconds: number): string => {
+    if (!seconds || seconds <= 0) return '0min'
     const hours = Math.floor(seconds / 3600)
     const minutes = Math.floor((seconds % 3600) / 60)
     return hours > 0 ? `${hours}h ${minutes}min` : `${minutes}min`
   }
 
   const formatWatchTime = (seconds: number): string => {
+    if (!seconds || seconds <= 0) return '0min'
     const hours = Math.floor(seconds / 3600)
     const minutes = Math.floor((seconds % 3600) / 60)
     return hours > 0 ? `${hours}h ${minutes}min` : `${minutes}min`
@@ -138,9 +141,10 @@ export default function ModulesPage() {
   }
 
   const getTotalModuleDuration = (module: Module): number => {
+    if (!module?.chapters) return 0
     return module.chapters.reduce((total, chapter) => 
-      total + chapter.contents.reduce((chapterTotal, content) => 
-        chapterTotal + content.duration, 0
+      total + (chapter?.contents || []).reduce((chapterTotal, content) => 
+        chapterTotal + (content?.duration || 0), 0
       ), 0
     )
   }
@@ -149,7 +153,9 @@ export default function ModulesPage() {
     return type === 'VIDEO' ? <Video className="w-4 h-4" /> : <Headphones className="w-4 h-4" />
   }
 
-  const completionRate = userStats ? Math.round((userStats.completedModules / userStats.totalModules) * 100) : 0
+  const completionRate = userStats && userStats.totalModules > 0 
+    ? Math.round((userStats.completedModules / userStats.totalModules) * 100) 
+    : 0
 
   // Composant pour les modules en aperçu (visiteurs non connectés)
   const ModulePreview = ({ module }: { module: Module }) => (
@@ -185,7 +191,7 @@ export default function ModulesPage() {
           {formatDuration(getTotalModuleDuration(module))}
         </div>
         <div className="text-sm text-gray-500">
-          {module.chapters.length} chapitre{module.chapters.length > 1 ? 's' : ''}
+          {module.chapters?.length || 0} chapitre{(module.chapters?.length || 0) > 1 ? 's' : ''}
         </div>
       </CardContent>
     </Card>
@@ -371,7 +377,7 @@ export default function ModulesPage() {
                       </div>
                       <div className="flex items-center text-gray-500 text-sm">
                         <BookOpen className="w-4 h-4 mr-1" />
-                        {module.chapters.length} chapitre{module.chapters.length > 1 ? 's' : ''}
+                        {module.chapters?.length || 0} chapitre{(module.chapters?.length || 0) > 1 ? 's' : ''}
                       </div>
                     </div>
                     <Button
@@ -383,7 +389,7 @@ export default function ModulesPage() {
                     </Button>
                   </div>
 
-                  {module.progress !== undefined && (
+                  {typeof module.progress === 'number' && (
                     <div className="mb-4">
                       <div className="flex justify-between text-sm text-gray-600 mb-1">
                         <span>Progression du module</span>
@@ -394,7 +400,7 @@ export default function ModulesPage() {
                   )}
 
                   {/* Chapitres */}
-                  {expandedModules.has(module.id) && (
+                  {expandedModules.has(module.id) && module.chapters && (
                     <div className="mt-6 space-y-4">
                       {module.chapters.map((chapter) => (
                         <Card key={chapter.id} className="border-l-4 border-l-blue-500">
@@ -428,53 +434,55 @@ export default function ModulesPage() {
                           </CardHeader>
                           <CardContent>
                             {/* Contenus du chapitre */}
-                            <div className="space-y-2 mb-4">
-                              {chapter.contents.map((content) => (
-                                <div 
-                                  key={content.id} 
-                                  className={`flex items-center justify-between p-3 rounded-lg border ${
-                                    content.isCompleted ? 'bg-green-50 border-green-200' :
-                                    content.isUnlocked ? 'bg-blue-50 border-blue-200' :
-                                    'bg-gray-50 border-gray-200'
-                                  }`}
-                                >
-                                  <div className="flex items-center space-x-3">
-                                    <div className={`p-2 rounded-full ${
-                                      content.isCompleted ? 'bg-green-500 text-white' :
-                                      content.isUnlocked ? 'bg-blue-500 text-white' :
-                                      'bg-gray-400 text-white'
-                                    }`}>
-                                      {getContentIcon(content.type)}
-                                    </div>
-                                    <div>
-                                      <h5 className="font-medium text-sm">{content.title}</h5>
-                                      <div className="flex items-center text-xs text-gray-500">
-                                        <Clock className="w-3 h-3 mr-1" />
-                                        {formatDuration(content.duration)}
+                            {chapter.contents && (
+                              <div className="space-y-2 mb-4">
+                                {chapter.contents.map((content) => (
+                                  <div 
+                                    key={content.id} 
+                                    className={`flex items-center justify-between p-3 rounded-lg border ${
+                                      content.isCompleted ? 'bg-green-50 border-green-200' :
+                                      content.isUnlocked ? 'bg-blue-50 border-blue-200' :
+                                      'bg-gray-50 border-gray-200'
+                                    }`}
+                                  >
+                                    <div className="flex items-center space-x-3">
+                                      <div className={`p-2 rounded-full ${
+                                        content.isCompleted ? 'bg-green-500 text-white' :
+                                        content.isUnlocked ? 'bg-blue-500 text-white' :
+                                        'bg-gray-400 text-white'
+                                      }`}>
+                                        {getContentIcon(content.type)}
+                                      </div>
+                                      <div>
+                                        <h5 className="font-medium text-sm">{content.title}</h5>
+                                        <div className="flex items-center text-xs text-gray-500">
+                                          <Clock className="w-3 h-3 mr-1" />
+                                          {formatDuration(content.duration)}
+                                        </div>
                                       </div>
                                     </div>
+                                    <div className="flex items-center space-x-2">
+                                      {typeof content.progress === 'number' && content.progress > 0 && (
+                                        <div className="text-xs text-gray-600">
+                                          {Math.round(content.progress)}%
+                                        </div>
+                                      )}
+                                      {content.isCompleted ? (
+                                        <CheckCircle className="w-4 h-4 text-green-500" />
+                                      ) : content.isUnlocked ? (
+                                        <Link href={`/content/${content.id}`}>
+                                          <Button size="sm" className="bg-blue-500 hover:bg-blue-600">
+                                            {content.type === 'VIDEO' ? 'Regarder' : 'Écouter'}
+                                          </Button>
+                                        </Link>
+                                      ) : (
+                                        <Lock className="w-4 h-4 text-gray-400" />
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="flex items-center space-x-2">
-                                    {content.progress !== undefined && content.progress > 0 && (
-                                      <div className="text-xs text-gray-600">
-                                        {Math.round(content.progress)}%
-                                      </div>
-                                    )}
-                                    {content.isCompleted ? (
-                                      <CheckCircle className="w-4 h-4 text-green-500" />
-                                    ) : content.isUnlocked ? (
-                                      <Link href={`/content/${content.id}`}>
-                                        <Button size="sm" className="bg-blue-500 hover:bg-blue-600">
-                                          {content.type === 'VIDEO' ? 'Regarder' : 'Écouter'}
-                                        </Button>
-                                      </Link>
-                                    ) : (
-                                      <Lock className="w-4 h-4 text-gray-400" />
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
+                                ))}
+                              </div>
+                            )}
 
                             {/* Quiz du chapitre */}
                             {chapter.quiz && (
