@@ -21,7 +21,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Video,
-  Headphones
+  Headphones,
+  RefreshCw
 } from 'lucide-react'
 import Link from 'next/link'
 import { toast } from 'sonner'
@@ -76,8 +77,9 @@ export default function ContentDetailPage() {
   const [localProgress, setLocalProgress] = useState(0)
   const [updateInProgress, setUpdateInProgress] = useState(false)
   const [mediaError, setMediaError] = useState<string | null>(null)
+  const [mediaLoading, setMediaLoading] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
   
-  // Utiliser une ref générique pour les deux types de média
   const mediaRef = useRef<HTMLVideoElement & HTMLAudioElement>(null)
   const progressUpdateInterval = useRef<NodeJS.Timeout | null>(null)
 
@@ -119,7 +121,33 @@ export default function ContentDetailPage() {
     }
   }, [session, params.id, router])
 
-  // Fonction pour mettre à jour la progression (simplifiée)
+  // Fonction pour valider l'URL du média
+  const validateMediaUrl = (url: string, type: 'VIDEO' | 'AUDIO'): boolean => {
+    if (!url) return false
+    
+    // Vérifier si c'est une URL valide
+    try {
+      new URL(url)
+    } catch {
+      console.error('URL invalide:', url)
+      return false
+    }
+
+    // Vérifier les extensions supportées
+    const videoExtensions = ['.mp4', '.webm', '.ogg', '.mov', '.avi']
+    const audioExtensions = ['.mp3', '.wav', '.ogg', '.m4a', '.aac']
+    
+    const extensions = type === 'VIDEO' ? videoExtensions : audioExtensions
+    const hasValidExtension = extensions.some(ext => url.toLowerCase().includes(ext))
+    
+    if (!hasValidExtension) {
+      console.warn('Extension non reconnue pour:', url)
+    }
+    
+    return true
+  }
+
+  // Fonction pour mettre à jour la progression
   const updateProgress = async (watchTime: number) => {
     if (updateInProgress || !content) return
     
@@ -145,23 +173,55 @@ export default function ContentDetailPage() {
     }
   }
 
-  // Configuration du média player (corrigée)
+  // Fonction pour recharger le média
+  const reloadMedia = () => {
+    if (!mediaRef.current || !content) return
+    
+    setMediaError(null)
+    setMediaLoading(true)
+    setRetryCount(prev => prev + 1)
+    
+    const media = mediaRef.current
+    media.load()
+  }
+
+  // Configuration du média player
   useEffect(() => {
     const media = mediaRef.current
     if (!media || !content) return
 
+    // Valider l'URL avant de continuer
+    if (!validateMediaUrl(content.url, content.type)) {
+      setMediaError('Format de fichier non supporté ou URL invalide')
+      return
+    }
+
     console.log('Configuration du média player pour:', content.type, content.url)
+    setMediaLoading(true)
+
+    const handleLoadStart = () => {
+      console.log('Début du chargement du média')
+      setMediaError(null)
+      setMediaLoading(true)
+    }
 
     const handleLoadedMetadata = () => {
       console.log('Métadonnées chargées, durée:', media.duration)
-      setDuration(media.duration)
+      setDuration(media.duration || 0)
       setMediaError(null)
+      setMediaLoading(false)
       
       // Reprendre là où l'utilisateur s'était arrêté
       if (content.watchTime > 0 && content.watchTime < media.duration) {
         media.currentTime = content.watchTime
         console.log('Position restaurée à:', content.watchTime)
       }
+    }
+
+    const handleCanPlay = () => {
+      console.log('Le média peut être lu')
+      setMediaError(null)
+      setMediaLoading(false)
     }
 
     const handleTimeUpdate = () => {
@@ -188,50 +248,85 @@ export default function ContentDetailPage() {
     const handleError = (e: Event) => {
       console.error('Erreur média:', e)
       const target = e.target as HTMLMediaElement
-      setMediaError(`Erreur de lecture: ${target.error?.message || 'Format non supporté'}`)
       setIsPlaying(false)
+      setMediaLoading(false)
+      
+      let errorMessage = 'Erreur de lecture du média'
+      
+      if (target.error) {
+        switch (target.error.code) {
+          case MediaError.MEDIA_ERR_ABORTED:
+            errorMessage = 'Lecture interrompue'
+            break
+          case MediaError.MEDIA_ERR_NETWORK:
+            errorMessage = 'Erreur réseau - Vérifiez votre connexion'
+            break
+          case MediaError.MEDIA_ERR_DECODE:
+            errorMessage = 'Erreur de décodage - Format non supporté'
+            break
+          case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+            errorMessage = 'Format ou source non supporté'
+            break
+          default:
+            errorMessage = `Erreur inconnue (${target.error.code})`
+        }
+      }
+      
+      setMediaError(errorMessage)
     }
 
-    const handleLoadStart = () => {
-      console.log('Début du chargement du média')
-      setMediaError(null)
+    const handleWaiting = () => {
+      setMediaLoading(true)
     }
 
-    const handleCanPlay = () => {
-      console.log('Le média peut être lu')
-      setMediaError(null)
+    const handlePlaying = () => {
+      setMediaLoading(false)
+    }
+
+    const handleStalled = () => {
+      console.warn('Lecture bloquée - problème de réseau')
+      setMediaLoading(true)
     }
 
     // Ajouter les event listeners
+    media.addEventListener('loadstart', handleLoadStart)
     media.addEventListener('loadedmetadata', handleLoadedMetadata)
+    media.addEventListener('canplay', handleCanPlay)
     media.addEventListener('timeupdate', handleTimeUpdate)
     media.addEventListener('play', handlePlay)
     media.addEventListener('pause', handlePause)
     media.addEventListener('error', handleError)
-    media.addEventListener('loadstart', handleLoadStart)
-    media.addEventListener('canplay', handleCanPlay)
+    media.addEventListener('waiting', handleWaiting)
+    media.addEventListener('playing', handlePlaying)
+    media.addEventListener('stalled', handleStalled)
 
     // Configuration initiale
     media.volume = volume
     media.preload = 'metadata'
+    
+    // Charger le média
+    media.load()
 
     // Nettoyage
     return () => {
+      media.removeEventListener('loadstart', handleLoadStart)
       media.removeEventListener('loadedmetadata', handleLoadedMetadata)
+      media.removeEventListener('canplay', handleCanPlay)
       media.removeEventListener('timeupdate', handleTimeUpdate)
       media.removeEventListener('play', handlePlay)
       media.removeEventListener('pause', handlePause)
       media.removeEventListener('error', handleError)
-      media.removeEventListener('loadstart', handleLoadStart)
-      media.removeEventListener('canplay', handleCanPlay)
+      media.removeEventListener('waiting', handleWaiting)
+      media.removeEventListener('playing', handlePlaying)
+      media.removeEventListener('stalled', handleStalled)
       
       if (progressUpdateInterval.current) {
         clearInterval(progressUpdateInterval.current)
       }
     }
-  }, [content, volume])
+  }, [content, volume, retryCount])
 
-  // Mise à jour périodique de la progression (séparée)
+  // Mise à jour périodique de la progression
   useEffect(() => {
     if (isPlaying && currentTime > 0) {
       if (progressUpdateInterval.current) {
@@ -242,7 +337,7 @@ export default function ContentDetailPage() {
         if (mediaRef.current && isPlaying) {
           updateProgress(mediaRef.current.currentTime)
         }
-      }, 10000) // Toutes les 10 secondes
+      }, 10000)
     } else {
       if (progressUpdateInterval.current) {
         clearInterval(progressUpdateInterval.current)
@@ -265,11 +360,16 @@ export default function ContentDetailPage() {
       if (isPlaying) {
         media.pause()
       } else {
+        // Réessayer de charger si il y a eu une erreur
+        if (mediaError) {
+          media.load()
+          return
+        }
         await media.play()
       }
     } catch (error) {
       console.error('Erreur lors de la lecture:', error)
-      setMediaError('Impossible de lire le média')
+      setMediaError('Impossible de lire le média - Cliquez sur recharger')
     }
   }
 
@@ -352,25 +452,36 @@ export default function ContentDetailPage() {
           <div className="lg:col-span-2">
             <Card className="overflow-hidden shadow-xl">
               <div className="relative bg-black">
+                {/* Loader pendant le chargement */}
+                {mediaLoading && !mediaError && (
+                  <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-10">
+                    <div className="text-center text-white">
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
+                      <p>Chargement du média...</p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Affichage d'erreur si problème de lecture */}
                 {mediaError && (
                   <div className="absolute inset-0 bg-red-900/90 flex items-center justify-center z-10">
                     <div className="text-center text-white p-6">
                       <div className="text-6xl mb-4">⚠️</div>
                       <h3 className="text-xl font-bold mb-2">Erreur de lecture</h3>
-                      <p className="text-sm opacity-90">{mediaError}</p>
-                      <Button 
-                        className="mt-4" 
-                        variant="secondary"
-                        onClick={() => {
-                          setMediaError(null)
-                          if (mediaRef.current) {
-                            mediaRef.current.load()
-                          }
-                        }}
-                      >
-                        Réessayer
-                      </Button>
+                      <p className="text-sm opacity-90 mb-4">{mediaError}</p>
+                      <div className="space-y-2">
+                        <Button 
+                          className="mr-2" 
+                          variant="secondary"
+                          onClick={reloadMedia}
+                        >
+                          <RefreshCw className="w-4 h-4 mr-2" />
+                          Recharger
+                        </Button>
+                        <p className="text-xs opacity-70">
+                          Tentative #{retryCount}
+                        </p>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -382,10 +493,10 @@ export default function ContentDetailPage() {
                     className="w-full aspect-video"
                     preload="metadata"
                     playsInline
-                    // Supprimer les contrôles natifs pour utiliser les nôtres
-                    // controls
+                    crossOrigin="anonymous"
                   >
-                    Votre navigateur ne supporte pas la lecture vidéo.
+                    <p>Votre navigateur ne supporte pas la lecture vidéo.</p>
+                    <p>URL: {content.url}</p>
                   </video>
                 ) : (
                   <div className="w-full aspect-video bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center">
@@ -396,9 +507,10 @@ export default function ContentDetailPage() {
                         ref={mediaRef}
                         src={content.url}
                         preload="metadata"
+                        crossOrigin="anonymous"
                         className="hidden"
                       >
-                        Votre navigateur ne supporte pas la lecture audio.
+                        <p>Votre navigateur ne supporte pas la lecture audio.</p>
                       </audio>
                     </div>
                   </div>
@@ -414,7 +526,7 @@ export default function ContentDetailPage() {
                     >
                       <div 
                         className="h-full bg-orange-500 rounded-full transition-all duration-300"
-                        style={{ width: `${(currentTime / duration) * 100}%` }}
+                        style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
                       />
                     </div>
                     
@@ -425,6 +537,7 @@ export default function ContentDetailPage() {
                           variant="ghost"
                           onClick={togglePlay}
                           className="text-white hover:bg-white/20"
+                          disabled={!!mediaError}
                         >
                           {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
                         </Button>
@@ -434,6 +547,7 @@ export default function ContentDetailPage() {
                           variant="ghost"
                           onClick={() => handleSeek(-10)}
                           className="text-white hover:bg-white/20"
+                          disabled={!duration || !!mediaError}
                         >
                           <SkipBack className="w-4 h-4" />
                         </Button>
@@ -443,6 +557,7 @@ export default function ContentDetailPage() {
                           variant="ghost"
                           onClick={() => handleSeek(10)}
                           className="text-white hover:bg-white/20"
+                          disabled={!duration || !!mediaError}
                         >
                           <SkipForward className="w-4 h-4" />
                         </Button>
@@ -480,6 +595,7 @@ export default function ContentDetailPage() {
                               }
                             }}
                             className="text-white hover:bg-white/20"
+                            disabled={!!mediaError}
                           >
                             <Maximize className="w-4 h-4" />
                           </Button>
@@ -567,6 +683,7 @@ export default function ContentDetailPage() {
                   <div><strong>État:</strong> {isPlaying ? 'En cours' : 'En pause'}</div>
                   <div><strong>Temps:</strong> {formatTime(currentTime)} / {formatTime(duration)}</div>
                   <div><strong>Progression:</strong> {Math.round(localProgress)}%</div>
+                  {mediaError && <div className="text-red-600"><strong>Erreur:</strong> {mediaError}</div>}
                 </div>
               </CardContent>
             </Card>
