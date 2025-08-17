@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+
 export const dynamic = 'force-dynamic'
+
 export async function GET() {
   try {
     const session = await getServerSession(authOptions)
@@ -45,7 +47,14 @@ export async function GET() {
     })
 
     let userStats = null
-    let modulesWithProgress = modules
+    let modulesWithProgress = modules.map(module => ({
+      ...module,
+      chapters: module.chapters || [],
+      isCompleted: false,
+      isUnlocked: false,
+      progress: 0,
+      allChaptersCompleted: false
+    }))
 
     if (session?.user?.id) {
       try {
@@ -59,7 +68,8 @@ export async function GET() {
           return NextResponse.json({
             error: 'Email non vérifié',
             message: 'Veuillez vérifier votre email avant d\'accéder aux modules',
-            emailNotVerified: true
+            emailNotVerified: true,
+            success: false
           }, { status: 403 })
         }
 
@@ -132,7 +142,7 @@ export async function GET() {
         const moduleProgressMap = new Map(moduleProgress.map(p => [p.moduleId, p]))
         const chapterProgressMap = new Map(chapterProgress.map(p => [p.chapterId, p]))
         const contentProgressMap = new Map(contentProgress.map(p => [p.contentId, p]))
-        const passedQuizChapterIds = new Set(quizResults.map(r => r.quiz.chapterId))
+        const passedQuizChapterIds = new Set(quizResults.map(r => r.quiz?.chapterId).filter(Boolean))
 
         // Déterminer quels modules sont débloqués
         modulesWithProgress = modules.map((module, moduleIndex) => {
@@ -148,26 +158,26 @@ export async function GET() {
           }
 
           // Calculer la progression des chapitres
-          const chaptersWithProgress = module.chapters.map((chapter, chapterIndex) => {
+          const chaptersWithProgress = (module.chapters || []).map((chapter, chapterIndex) => {
             const chapterProgressData = chapterProgressMap.get(chapter.id)
             const isFirstChapter = chapterIndex === 0
             
             // Un chapitre est débloqué si c'est le premier du module ou si le précédent est complété
             let isChapterUnlocked = isFirstChapter && isModuleUnlocked
-            if (!isFirstChapter && chapterIndex > 0) {
+            if (!isFirstChapter && chapterIndex > 0 && module.chapters) {
               const previousChapter = module.chapters[chapterIndex - 1]
               const previousChapterProgress = chapterProgressMap.get(previousChapter.id)
               isChapterUnlocked = previousChapterProgress?.isCompleted || false
             }
 
             // Calculer la progression des contenus
-            const contentsWithProgress = chapter.contents.map((content, contentIndex) => {
+            const contentsWithProgress = (chapter.contents || []).map((content, contentIndex) => {
               const contentProgressData = contentProgressMap.get(content.id)
               const isFirstContent = contentIndex === 0
               
               // Un contenu est débloqué si c'est le premier du chapitre ou si le précédent est complété
               let isContentUnlocked = isFirstContent && isChapterUnlocked
-              if (!isFirstContent && contentIndex > 0) {
+              if (!isFirstContent && contentIndex > 0 && chapter.contents) {
                 const previousContent = chapter.contents[contentIndex - 1]
                 const previousContentProgress = contentProgressMap.get(previousContent.id)
                 isContentUnlocked = previousContentProgress?.isCompleted || false
@@ -186,17 +196,20 @@ export async function GET() {
               }
             })
 
-            // Un chapitre est complété si tous ses contenus sont complétés
+            // Un chapitre est complété si tous ses contenus sont complétés ET le quiz est passé (s'il y en a un)
             const allContentsCompleted = chapter.contents.length > 0 && 
               chapter.contents.every(content => contentProgressMap.get(content.id)?.isCompleted)
             
             // Vérifier si le quiz du chapitre est passé
             const quizPassed = chapter.quiz ? passedQuizChapterIds.has(chapter.id) : true
+            
+            // Le chapitre est vraiment complété seulement si tous les contenus sont terminés ET le quiz passé
+            const isChapterReallyCompleted = allContentsCompleted && quizPassed
 
             return {
               ...chapter,
               contents: contentsWithProgress,
-              isCompleted: chapterProgressData?.isCompleted || false,
+              isCompleted: isChapterReallyCompleted,
               isUnlocked: isChapterUnlocked,
               allContentsCompleted,
               quizPassed,
@@ -209,17 +222,12 @@ export async function GET() {
 
           // Un module est complété si tous ses chapitres sont complétés
           const allChaptersCompleted = module.chapters.length > 0 && 
-            module.chapters.every(chapter => {
-              const chapterProgressData = chapterProgressMap.get(chapter.id)
-              return chapterProgressData?.isCompleted || false
-            })
+            chaptersWithProgress.every(chapter => chapter.isCompleted)
 
           // Calculer la progression globale du module
-          const totalContents = module.chapters.reduce((sum, chapter) => sum + chapter.contents.length, 0)
-          const completedContents = module.chapters.reduce((sum, chapter) => {
-            return sum + chapter.contents.filter(content => 
-              contentProgressMap.get(content.id)?.isCompleted
-            ).length
+          const totalContents = module.chapters.reduce((sum, chapter) => sum + (chapter.contents?.length || 0), 0)
+          const completedContents = chaptersWithProgress.reduce((sum, chapter) => {
+            return sum + (chapter.contents?.filter(content => content.isCompleted)?.length || 0)
           }, 0)
           
           const moduleProgressPercentage = totalContents > 0 
@@ -229,28 +237,29 @@ export async function GET() {
           return {
             ...module,
             chapters: chaptersWithProgress,
-            isCompleted: moduleProgressData?.isCompleted || false,
+            isCompleted: allChaptersCompleted,
             isUnlocked: isModuleUnlocked,
             progress: moduleProgressPercentage,
             allChaptersCompleted
           }
         })
+
       } catch (userError) {
         console.error('Erreur lors de la récupération des données utilisateur:', userError)
         // En cas d'erreur, on continue avec les modules de base
-        modulesWithProgress = modules.map((module, index) => ({
+        modulesWithProgress = modules.map((module, moduleIndex) => ({
           ...module,
-          chapters: module.chapters.map((chapter, chapterIndex) => ({
+          chapters: (module.chapters || []).map((chapter, chapterIndex) => ({
             ...chapter,
-            contents: chapter.contents.map((content, contentIndex) => ({
+            contents: (chapter.contents || []).map((content, contentIndex) => ({
               ...content,
               isCompleted: false,
-              isUnlocked: index === 0 && chapterIndex === 0 && contentIndex === 0,
+              isUnlocked: moduleIndex === 0 && chapterIndex === 0 && contentIndex === 0,
               progress: 0,
               watchTime: 0
             })),
             isCompleted: false,
-            isUnlocked: index === 0 && chapterIndex === 0,
+            isUnlocked: moduleIndex === 0 && chapterIndex === 0,
             allContentsCompleted: false,
             quizPassed: false,
             quiz: chapter.quiz ? {
@@ -259,18 +268,18 @@ export async function GET() {
             } : null
           })),
           isCompleted: false,
-          isUnlocked: index === 0,
+          isUnlocked: moduleIndex === 0,
           progress: 0,
           allChaptersCompleted: false
         }))
       }
     } else {
-      // Pour les utilisateurs non connectés, seul le premier contenu du premier chapitre du premier module est visible
+      // Pour les utilisateurs non connectés, aucun contenu n'est débloqué
       modulesWithProgress = modules.map((module, moduleIndex) => ({
         ...module,
-        chapters: module.chapters.map((chapter, chapterIndex) => ({
+        chapters: (module.chapters || []).map((chapter, chapterIndex) => ({
           ...chapter,
-          contents: chapter.contents.map((content, contentIndex) => ({
+          contents: (chapter.contents || []).map((content, contentIndex) => ({
             ...content,
             isCompleted: false,
             isUnlocked: false, // Aucun contenu débloqué pour les non-connectés
