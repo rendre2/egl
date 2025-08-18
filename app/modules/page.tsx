@@ -327,15 +327,15 @@ export default function ModulesPage() {
             </CardContent>
           </Card>
 
-          {/* Modules avec structure hiérarchique */}
-          <div className="space-y-8 mb-12">
+          {/* Modules avec affichage en grille 2x2 */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
             {modules.map((module) => (
               <Card key={module.id} className="overflow-hidden shadow-lg">
                 <div className="relative">
                   <img
-                    src={module.thumbnail || 'https://images.pexels.com/photos/2825806/pexels-photo-2825806.jpeg?auto=compress&cs=tinysrgb&w=1200'}
+                    src={module.thumbnail || 'https://images.pexels.com/photos/2825806/pexels-photo-2825806.jpeg?auto=compress&cs=tinysrgb&w=800'}
                     alt={module.title}
-                    className="w-full h-64 object-cover"
+                    className="w-full h-48 object-cover"
                   />
                   <div className="absolute top-4 left-4">
                     <Badge className="bg-white/90 text-blue-900 backdrop-blur-sm">
@@ -365,8 +365,8 @@ export default function ModulesPage() {
                 <CardContent className="p-6">
                   {/* Titre et description du module */}
                   <div className="mb-6">
-                    <h2 className="text-2xl font-bold text-blue-900 mb-3">{module.title}</h2>
-                    <p className="text-gray-600 text-lg leading-relaxed">{module.description}</p>
+                    <h2 className="text-xl font-bold text-blue-900 mb-3">{module.title}</h2>
+                    <p className="text-gray-600 leading-relaxed line-clamp-3">{module.description}</p>
                   </div>
 
                   <div className="flex items-center justify-between mb-4">
@@ -406,12 +406,12 @@ export default function ModulesPage() {
                         <Card key={chapter.id} className="border-l-4 border-l-blue-500">
                           <CardHeader className="pb-3">
                             <div className="flex items-center justify-between">
-                              <div>
+                              <div className="flex-1">
                                 <Badge variant="outline" className="mb-2">
                                   Chapitre {chapter.order}
                                 </Badge>
                                 <CardTitle className="text-lg">{chapter.title}</CardTitle>
-                                <p className="text-sm text-gray-600 mt-1">{chapter.description}</p>
+                                <p className="text-sm text-gray-600 mt-1 line-clamp-2">{chapter.description}</p>
                               </div>
                               <div className="flex items-center space-x-2">
                                 {chapter.isCompleted ? (
@@ -445,23 +445,23 @@ export default function ModulesPage() {
                                       'bg-gray-50 border-gray-200'
                                     }`}
                                   >
-                                    <div className="flex items-center space-x-3">
-                                      <div className={`p-2 rounded-full ${
+                                    <div className="flex items-center space-x-3 flex-1 min-w-0">
+                                      <div className={`p-2 rounded-full flex-shrink-0 ${
                                         content.isCompleted ? 'bg-green-500 text-white' :
                                         content.isUnlocked ? 'bg-blue-500 text-white' :
                                         'bg-gray-400 text-white'
                                       }`}>
                                         {getContentIcon(content.type)}
                                       </div>
-                                      <div>
-                                        <h5 className="font-medium text-sm">{content.title}</h5>
+                                      <div className="min-w-0 flex-1">
+                                        <h5 className="font-medium text-sm truncate">{content.title}</h5>
                                         <div className="flex items-center text-xs text-gray-500">
                                           <Clock className="w-3 h-3 mr-1" />
                                           {formatDuration(content.duration)}
                                         </div>
                                       </div>
                                     </div>
-                                    <div className="flex items-center space-x-2">
+                                    <div className="flex items-center space-x-2 flex-shrink-0">
                                       {typeof content.progress === 'number' && content.progress > 0 && (
                                         <div className="text-xs text-gray-600">
                                           {Math.round(content.progress)}%
@@ -471,7 +471,7 @@ export default function ModulesPage() {
                                         <CheckCircle className="w-4 h-4 text-green-500" />
                                       ) : content.isUnlocked ? (
                                         <Link href={`/content/${content.id}`}>
-                                          <Button size="sm" className="bg-blue-500 hover:bg-blue-600">
+                                          <Button size="sm" className="bg-blue-500 hover:bg-blue-600 text-xs px-2 py-1">
                                             {content.type === 'VIDEO' ? 'Regarder' : 'Écouter'}
                                           </Button>
                                         </Link>
