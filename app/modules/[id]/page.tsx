@@ -23,49 +23,54 @@ import {
   ArrowLeft,
   ArrowRight,
   Award,
-  Lock
+  Lock,
+  Video,
+  Headphones
 } from 'lucide-react'
 import Link from 'next/link'
 import { toast } from 'sonner'
 
-interface QuizResult {
-  score: number
-  passed: boolean
-  createdAt: string
+interface Content {
+  id: string
+  title: string
+  type: 'VIDEO' | 'AUDIO'
+  url: string
+  duration: number
+  order: number
+  description?: string
+  isCompleted: boolean
+  progress: number
+  watchTime: number
 }
 
 interface Quiz {
   id: string
   title: string
   passingScore: number
-  userResult?: QuizResult
+  userResult?: {
+    score: number
+    passed: boolean
+    createdAt: string
+  }
 }
 
-interface NavigationModule {
-  id: string
-  order: number
-  unlocked?: boolean
-}
-
-interface Navigation {
-  previous: NavigationModule | null
-  next: NavigationModule | null
-}
-
-interface Module {
+interface Chapter {
   id: string
   title: string
   description: string
-  videoUrl: string
-  duration: number
   order: number
-  content?: string
-  objectives?: string[]
-  progress: number
-  isCompleted: boolean
-  watchTime: number
+  contents: Content[]
   quiz?: Quiz
-  navigation: Navigation
+  allContentsCompleted: boolean
+  moduleInfo: {
+    id: string
+    title: string
+  }
+}
+
+interface Navigation {
+  previous: Content | null
+  next: Content | null
 }
 
 interface ApiResponse {
@@ -73,20 +78,23 @@ interface ApiResponse {
   message?: string
 }
 
-interface ModuleResponse extends Module, ApiResponse {}
+interface ContentResponse extends Content, ApiResponse {
+  chapter: Chapter
+  navigation: Navigation
+}
 
-export default function ModuleDetailPage() {
+export default function ContentDetailPage() {
   const { data: session, status } = useSession()
   const router = useRouter()
   const params = useParams()
-  const [module, setModule] = useState<Module | null>(null)
+  const [content, setContent] = useState<ContentResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [localProgress, setLocalProgress] = useState(0)
   const [updateInProgress, setUpdateInProgress] = useState(false)
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement>(null)
   const progressUpdateInterval = useRef<NodeJS.Timeout | null>(null)
 
   // Redirection si non connecté
@@ -98,13 +106,13 @@ export default function ModuleDetailPage() {
     }
   }, [session, status, router])
 
-  // Fonction pour mettre à jour la progression (memoized)
+  // Fonction pour mettre à jour la progression
   const updateProgress = useCallback(async (watchTime: number, isCompleted: boolean = false) => {
-    if (updateInProgress || !module || !params.id) return
+    if (updateInProgress || !content || !params.id) return
     
     setUpdateInProgress(true)
     try {
-      const response = await fetch(`/api/user-progress/${params.id}`, {
+      const response = await fetch(`/api/content-progress/${params.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -115,72 +123,82 @@ export default function ModuleDetailPage() {
       
       if (!response.ok) {
         console.error('Erreur lors de la mise à jour de la progression')
+      } else {
+        // Marquer le contenu comme complété localement
+        if (isCompleted) {
+          setContent(prev => prev ? { ...prev, isCompleted: true } : null)
+        }
       }
     } catch (error) {
       console.error('Erreur lors de la mise à jour de la progression:', error)
     } finally {
       setUpdateInProgress(false)
     }
-  }, [updateInProgress, module, params.id])
+  }, [updateInProgress, content, params.id])
 
-  // Charger les données du module
+  // Charger les données du contenu
   useEffect(() => {
     if (session && params.id) {
-      const fetchModule = async () => {
+      const fetchContent = async () => {
         try {
-          const response = await fetch(`/api/modules/${params.id}`)
+          const response = await fetch(`/api/content/${params.id}`)
           if (!response.ok) {
             const errorData: ApiResponse = await response.json()
-            throw new Error(errorData.message || 'Erreur lors de la récupération du module')
+            throw new Error(errorData.message || 'Erreur lors de la récupération du contenu')
           }
-          const data: ModuleResponse = await response.json()
+          const data: ContentResponse = await response.json()
           if (data.success) {
-            setModule(data)
+            setContent(data)
             setLocalProgress(data.progress || 0)
           } else {
-            throw new Error(data.message || 'Erreur lors de la récupération du module')
+            throw new Error(data.message || 'Erreur lors de la récupération du contenu')
           }
         } catch (error) {
-          console.error('Erreur lors du chargement du module:', error)
-          const errorMessage = error instanceof Error ? error.message : 'Impossible de charger le module'
+          console.error('Erreur lors du chargement du contenu:', error)
+          const errorMessage = error instanceof Error ? error.message : 'Impossible de charger le contenu'
           toast.error(errorMessage)
           router.push('/modules')
         } finally {
           setLoading(false)
         }
       }
-      fetchModule()
+      fetchContent()
     }
   }, [session, params.id, router])
 
-  // Gestion du lecteur vidéo
+  // Gestion du lecteur média
   useEffect(() => {
-    const video = videoRef.current
-    if (!video || !module) return
+    const media = mediaRef.current
+    if (!media || !content) return
 
     const updateTime = () => {
-      const current = video.currentTime
+      const current = media.currentTime
       setCurrentTime(current)
       
-      if (video.duration > 0) {
-        const progress = (current / video.duration) * 100
+      if (media.duration > 0) {
+        const progress = (current / media.duration) * 100
         setLocalProgress(progress)
         
-        // Marquer comme complété à 90%
-        if (progress >= 90 && !module.isCompleted) {
-          setModule(prev => prev ? { ...prev, isCompleted: true } : null)
+        // Marquer comme complété à 95%
+        if (progress >= 95 && !content.isCompleted) {
           updateProgress(current, true)
-          toast.success('Module terminé ! Vous pouvez maintenant passer au quiz.')
+          toast.success(`${content.type === 'VIDEO' ? 'Vidéo' : 'Audio'} terminé ! Passez au contenu suivant.`)
+          
+          // Vérifier si tous les contenus du chapitre sont terminés
+          setTimeout(() => {
+            // Recharger les données pour vérifier l'état du chapitre
+            window.location.reload()
+          }, 1000)
         }
       }
     }
 
     const updateDuration = () => {
-      if (video.duration && !isNaN(video.duration)) {
-        setDuration(video.duration)
+      if (media.duration && !isNaN(media.duration)) {
+        setDuration(media.duration)
         // Reprendre là où l'utilisateur s'était arrêté
-        if (module.watchTime > 0 && module.watchTime < video.duration) {
-          video.currentTime = module.watchTime
+        if (content.watchTime > 0 && content.watchTime < media.duration) {
+          media.currentTime = content.watchTime
         }
       }
     }
@@ -189,8 +207,8 @@ export default function ModuleDetailPage() {
     const handlePause = () => setIsPlaying(false)
     
     const handleError = (e: Event) => {
-      console.error('Erreur de lecture vidéo:', e)
-      toast.error('Erreur lors de la lecture de la vidéo')
+      console.error('Erreur de lecture média:', e)
+      toast.error(`Erreur lors de la lecture ${content.type === 'VIDEO' ? 'de la vidéo' : 'de l\'audio'}`)
     }
 
     const handleLoadStart = () => {
@@ -201,13 +219,13 @@ export default function ModuleDetailPage() {
       setLoading(false)
     }
 
-    video.addEventListener('timeupdate', updateTime)
-    video.addEventListener('loadedmetadata', updateDuration)
-    video.addEventListener('play', handlePlay)
-    video.addEventListener('pause', handlePause)
-    video.addEventListener('error', handleError)
-    video.addEventListener('loadstart', handleLoadStart)
-    video.addEventListener('canplay', handleCanPlay)
+    media.addEventListener('timeupdate', updateTime)
+    media.addEventListener('loadedmetadata', updateDuration)
+    media.addEventListener('play', handlePlay)
+    media.addEventListener('pause', handlePause)
+    media.addEventListener('error', handleError)
+    media.addEventListener('loadstart', handleLoadStart)
+    media.addEventListener('canplay', handleCanPlay)
 
     // Mise à jour périodique de la progression
     if (progressUpdateInterval.current) {
@@ -215,30 +233,30 @@ export default function ModuleDetailPage() {
     }
     
     progressUpdateInterval.current = setInterval(() => {
-      if (isPlaying && video.currentTime > 0) {
-        updateProgress(video.currentTime)
+      if (isPlaying && media.currentTime > 0) {
+        updateProgress(media.currentTime)
       }
     }, 10000) // Toutes les 10 secondes
 
     return () => {
-      video.removeEventListener('timeupdate', updateTime)
-      video.removeEventListener('loadedmetadata', updateDuration)
-      video.removeEventListener('play', handlePlay)
-      video.removeEventListener('pause', handlePause)
-      video.removeEventListener('error', handleError)
-      video.removeEventListener('loadstart', handleLoadStart)
-      video.removeEventListener('canplay', handleCanPlay)
+      media.removeEventListener('timeupdate', updateTime)
+      media.removeEventListener('loadedmetadata', updateDuration)
+      media.removeEventListener('play', handlePlay)
+      media.removeEventListener('pause', handlePause)
+      media.removeEventListener('error', handleError)
+      media.removeEventListener('loadstart', handleLoadStart)
+      media.removeEventListener('canplay', handleCanPlay)
       
       if (progressUpdateInterval.current) {
         clearInterval(progressUpdateInterval.current)
       }
       
       // Sauvegarder la progression avant de quitter
-      if (video.currentTime > 0) {
-        updateProgress(video.currentTime, localProgress >= 90)
+      if (media.currentTime > 0) {
+        updateProgress(media.currentTime, localProgress >= 95)
       }
     }
-  }, [module, isPlaying, localProgress, updateProgress])
+  }, [content, isPlaying, localProgress, updateProgress])
 
   const formatDuration = (seconds: number): string => {
     if (!seconds || isNaN(seconds)) return '0 min'
@@ -248,28 +266,28 @@ export default function ModuleDetailPage() {
   }
 
   const togglePlay = () => {
-    const video = videoRef.current
-    if (!video) return
+    const media = mediaRef.current
+    if (!media) return
 
     if (isPlaying) {
-      video.pause()
+      media.pause()
     } else {
-      const playPromise = video.play()
+      const playPromise = media.play()
       if (playPromise !== undefined) {
         playPromise.catch(error => {
           console.error('Erreur lors de la lecture:', error)
-          toast.error('Impossible de lire la vidéo')
+          toast.error(`Impossible de lire ${content?.type === 'VIDEO' ? 'la vidéo' : 'l\'audio'}`)
         })
       }
     }
   }
 
   const handleSeek = (seconds: number) => {
-    const video = videoRef.current
-    if (!video || !video.duration) return
+    const media = mediaRef.current
+    if (!media || !media.duration) return
     
-    const newTime = Math.max(0, Math.min(video.duration, video.currentTime + seconds))
-    video.currentTime = newTime
+    const newTime = Math.max(0, Math.min(media.duration, media.currentTime + seconds))
+    media.currentTime = newTime
   }
 
   const formatTime = (time: number): string => {
@@ -280,25 +298,21 @@ export default function ModuleDetailPage() {
   }
 
   const handleProgressClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    const video = videoRef.current
-    if (!video || !video.duration) return
+    const media = mediaRef.current
+    if (!media || !media.duration) return
 
     const rect = event.currentTarget.getBoundingClientRect()
     const clickPosition = (event.clientX - rect.left) / rect.width
-    const newTime = clickPosition * video.duration
-    video.currentTime = newTime
+    const newTime = clickPosition * media.duration
+    media.currentTime = newTime
   }
 
   const handleFullscreen = () => {
-    const video = videoRef.current
-    if (!video) return
+    const media = mediaRef.current
+    if (!media || content?.type !== 'VIDEO') return
 
-    if (video.requestFullscreen) {
-      video.requestFullscreen()
-    } else if ((video as any).webkitRequestFullscreen) {
-      (video as any).webkitRequestFullscreen()
-    } else if ((video as any).msRequestFullscreen) {
-      (video as any).msRequestFullscreen()
+    if ((media as HTMLVideoElement).requestFullscreen) {
+      (media as HTMLVideoElement).requestFullscreen()
     }
   }
 
@@ -310,11 +324,11 @@ export default function ModuleDetailPage() {
     )
   }
 
-  if (!module) {
+  if (!content) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Module non trouvé</h2>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Contenu non trouvé</h2>
           <Link href="/modules">
             <Button>Retour aux modules</Button>
           </Link>
@@ -328,6 +342,7 @@ export default function ModuleDetailPage() {
       <Header />
       
       <main className="container mx-auto px-4 py-8">
+        {/* Navigation supérieure */}
         <div className="flex items-center justify-between mb-6">
           <Link
             href="/modules"
@@ -336,27 +351,53 @@ export default function ModuleDetailPage() {
             <ArrowLeft className="w-4 h-4 mr-2" />
             Retour aux modules
           </Link>
-          <Badge variant="outline" className="text-blue-600">
-            Module {module.order}
-          </Badge>
+          <div className="flex items-center space-x-2">
+            <Badge variant="outline" className="text-blue-600">
+              {content.chapter.moduleInfo.title}
+            </Badge>
+            <Badge variant="outline" className="text-green-600">
+              {content.chapter.title}
+            </Badge>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2">
+            {/* Lecteur média */}
             <Card className="overflow-hidden shadow-xl">
               <div className="relative bg-black">
-                <video
-                  ref={videoRef}
-                  src={module.videoUrl}
-                  className="w-full aspect-video"
-                  preload="metadata"
-                  onError={(e) => {
-                    console.error('Erreur vidéo:', e)
-                    toast.error('Impossible de charger la vidéo')
-                  }}
-                />
+                {content.type === 'VIDEO' ? (
+                  <video
+                    ref={mediaRef as React.RefObject<HTMLVideoElement>}
+                    src={content.url}
+                    className="w-full aspect-video"
+                    preload="metadata"
+                    onError={(e) => {
+                      console.error('Erreur vidéo:', e)
+                      toast.error('Impossible de charger la vidéo')
+                    }}
+                  />
+                ) : (
+                  <div className="aspect-video flex items-center justify-center bg-gradient-to-br from-purple-900 to-blue-900">
+                    <div className="text-center text-white">
+                      <Headphones className="w-24 h-24 mx-auto mb-4" />
+                      <h3 className="text-xl font-semibold mb-2">{content.title}</h3>
+                      <p className="text-purple-200">Contenu audio</p>
+                    </div>
+                    <audio
+                      ref={mediaRef as React.RefObject<HTMLAudioElement>}
+                      src={content.url}
+                      preload="metadata"
+                      className="hidden"
+                      onError={(e) => {
+                        console.error('Erreur audio:', e)
+                        toast.error('Impossible de charger l\'audio')
+                      }}
+                    />
+                  </div>
+                )}
                 
-                {/* Contrôles vidéo personnalisés */}
+                {/* Contrôles média personnalisés */}
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
                   <div className="space-y-2">
                     {/* Barre de progression cliquable */}
@@ -416,14 +457,16 @@ export default function ModuleDetailPage() {
                           <Volume2 className="w-5 h-5" />
                         </Button>
                         
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={handleFullscreen}
-                          className="text-white hover:bg-white/20"
-                        >
-                          <Maximize className="w-5 h-5" />
-                        </Button>
+                        {content.type === 'VIDEO' && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={handleFullscreen}
+                            className="text-white hover:bg-white/20"
+                          >
+                            <Maximize className="w-5 h-5" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -431,11 +474,12 @@ export default function ModuleDetailPage() {
               </div>
             </Card>
 
+            {/* Progression */}
             <Card className="mt-6">
               <CardHeader>
                 <CardTitle className="flex items-center">
                   <Clock className="w-5 h-5 mr-2 text-orange-500" />
-                  Progression du Module
+                  Progression du Contenu
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -447,21 +491,14 @@ export default function ModuleDetailPage() {
                   <Progress value={localProgress} className="h-3" />
                   
                   <div className="flex justify-between text-sm text-gray-600">
-                    <span>Temps regardé: {formatTime(currentTime)}</span>
+                    <span>Temps visionné: {formatTime(currentTime)}</span>
                     <span>Durée totale: {formatTime(duration)}</span>
                   </div>
                   
-                  {module.isCompleted && (
+                  {content.isCompleted && (
                     <div className="flex items-center text-green-600 font-semibold">
                       <CheckCircle className="w-5 h-5 mr-2" />
-                      Module terminé ! {module.quiz ? 'Passez au quiz pour débloquer le suivant.' : 'Module validé !'}
-                    </div>
-                  )}
-
-                  {module.quiz?.userResult && (
-                    <div className={`flex items-center font-semibold ${module.quiz.userResult.passed ? 'text-green-600' : 'text-red-600'}`}>
-                      <Award className="w-5 h-5 mr-2" />
-                      Quiz {module.quiz.userResult.passed ? 'réussi' : 'échoué'} : {module.quiz.userResult.score}%
+                      Contenu terminé !
                     </div>
                   )}
                 </div>
@@ -470,59 +507,101 @@ export default function ModuleDetailPage() {
           </div>
 
           <div className="space-y-6">
+            {/* Informations du contenu */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-2xl text-blue-900">
-                  {module.title}
+                <CardTitle className="flex items-center text-2xl text-blue-900">
+                  {content.type === 'VIDEO' ? <Video className="w-6 h-6 mr-2" /> : <Headphones className="w-6 h-6 mr-2" />}
+                  {content.title}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-gray-600 mb-4">
-                  {module.description}
+                  {content.description || 'Description non disponible'}
                 </p>
                 
                 <div className="flex items-center text-sm text-gray-500 mb-4">
                   <Clock className="w-4 h-4 mr-1" />
-                  {formatDuration(module.duration)}
+                  {formatDuration(content.duration)}
                 </div>
 
                 <Separator className="my-4" />
 
-                <h4 className="font-semibold text-blue-900 mb-3">Objectifs d'apprentissage</h4>
-                <ul className="space-y-2">
-                  {(module.objectives || ['Pas d\'objectifs définis']).map((objective, index) => (
-                    <li key={index} className="flex items-start">
-                      <CheckCircle className="w-4 h-4 text-green-500 mr-2 mt-0.5 flex-shrink-0" />
-                      <span className="text-sm text-gray-600">{objective}</span>
-                    </li>
-                  ))}
-                </ul>
+                <h4 className="font-semibold text-blue-900 mb-3">Chapitre: {content.chapter.title}</h4>
+                <p className="text-sm text-gray-600">{content.chapter.description}</p>
               </CardContent>
             </Card>
 
-            {/* Actions du module */}
+            {/* Actions */}
             <Card>
               <CardContent className="pt-6">
                 <div className="space-y-3">
-                  {module.quiz ? (
+                  {/* Navigation entre contenus */}
+                  <div className="flex justify-between mb-4">
+                    {content.navigation.previous ? (
+                      <Link href={`/content/${content.navigation.previous.id}`}>
+                        <Button variant="outline" size="sm">
+                          <ArrowLeft className="w-4 h-4 mr-1" />
+                          Précédent
+                        </Button>
+                      </Link>
+                    ) : (
+                      <Button variant="outline" size="sm" disabled>
+                        <ArrowLeft className="w-4 h-4 mr-1" />
+                        Précédent
+                      </Button>
+                    )}
+                    
+                    {content.navigation.next ? (
+                      <Link href={`/content/${content.navigation.next.id}`}>
+                        <Button variant="outline" size="sm">
+                          Suivant
+                          <ArrowRight className="w-4 h-4 ml-1" />
+                        </Button>
+                      </Link>
+                    ) : (
+                      <Button variant="outline" size="sm" disabled>
+                        Suivant
+                        <ArrowRight className="w-4 h-4 ml-1" />
+                      </Button>
+                    )}
+                  </div>
+
+                  <Separator />
+
+                  {/* Accès au quiz */}
+                  {content.chapter.quiz ? (
                     <>
-                      {module.isCompleted ? (
-                        <Link href={`/modules/${module.id}/quiz`}>
+                      {content.chapter.allContentsCompleted ? (
+                        <Link href={`/quiz/${content.chapter.quiz.id}`}>
                           <Button className="w-full bg-green-500 hover:bg-green-600">
                             <BookOpen className="w-4 h-4 mr-2" />
-                            {module.quiz.userResult ? 'Repasser le quiz' : 'Passer le quiz'}
+                            {content.chapter.quiz.userResult ? 'Repasser le quiz' : 'Passer le quiz du chapitre'}
                           </Button>
                         </Link>
                       ) : (
                         <Button disabled className="w-full bg-gray-400">
                           <Lock className="w-4 h-4 mr-2" />
-                          Quiz disponible après visionnage complet
+                          Quiz disponible après tous les contenus
                         </Button>
+                      )}
+                      
+                      {content.chapter.quiz.userResult && (
+                        <div className={`text-center p-3 rounded-lg ${
+                          content.chapter.quiz.userResult.passed 
+                            ? 'bg-green-50 text-green-700' 
+                            : 'bg-red-50 text-red-700'
+                        }`}>
+                          <Award className="w-5 h-5 mx-auto mb-1" />
+                          <p className="text-sm font-semibold">
+                            Quiz {content.chapter.quiz.userResult.passed ? 'réussi' : 'échoué'} : {content.chapter.quiz.userResult.score}%
+                          </p>
+                        </div>
                       )}
                     </>
                   ) : (
                     <div className="text-center p-4 bg-blue-50 rounded-lg">
-                      <p className="text-sm text-blue-600">Aucun quiz disponible pour ce module</p>
+                      <p className="text-sm text-blue-600">Aucun quiz pour ce chapitre</p>
                     </div>
                   )}
                   
@@ -534,71 +613,8 @@ export default function ModuleDetailPage() {
                 </div>
               </CardContent>
             </Card>
-
-            {/* Navigation */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Navigation</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex justify-between">
-                  {module.navigation.previous ? (
-                    <Link href={`/modules/${module.navigation.previous.id}`}>
-                      <Button variant="outline" size="sm">
-                        <ArrowLeft className="w-4 h-4 mr-1" />
-                        Module {module.navigation.previous.order}
-                      </Button>
-                    </Link>
-                  ) : (
-                    <Button variant="outline" size="sm" disabled>
-                      <ArrowLeft className="w-4 h-4 mr-1" />
-                      Précédent
-                    </Button>
-                  )}
-                  
-                  {module.navigation.next ? (
-                    module.navigation.next.unlocked ? (
-                      <Link href={`/modules/${module.navigation.next.id}`}>
-                        <Button variant="outline" size="sm">
-                          Module {module.navigation.next.order}
-                          <ArrowRight className="w-4 h-4 ml-1" />
-                        </Button>
-                      </Link>
-                    ) : (
-                      <Button variant="outline" size="sm" disabled>
-                        <Lock className="w-4 h-4 mr-1" />
-                        Module {module.navigation.next.order}
-                      </Button>
-                    )
-                  ) : (
-                    <Button variant="outline" size="sm" disabled>
-                      Suivant
-                      <ArrowRight className="w-4 h-4 ml-1" />
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
           </div>
         </div>
-
-        {/* Contenu détaillé */}
-        <Card className="mt-8">
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <BookOpen className="w-5 h-5 mr-2 text-orange-500" />
-              Contenu Détaillé
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div 
-              className="prose max-w-none"
-              dangerouslySetInnerHTML={{ 
-                __html: module.content || '<p class="text-gray-600">Contenu du module à venir...</p>' 
-              }}
-            />
-          </CardContent>
-        </Card>
       </main>
 
       <Footer />
