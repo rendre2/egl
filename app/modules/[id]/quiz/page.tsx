@@ -25,21 +25,42 @@ import {
 import Link from 'next/link'
 import { toast } from 'sonner'
 
-interface Question {
+// Interface pour les questions côté client (sans réponses)
+interface QuizQuestion {
   id: string
   question: string
-  options: string[]
-  correctAnswer: number
-  explanation: string
+  type: 'multiple_choice' | 'true_false'
+  options?: string[] // Pour multiple_choice uniquement
 }
 
+// CORRIGÉ : Interface conforme à l'API
 interface Quiz {
   id: string
-  moduleId: string
+  chapterId: string
   title: string
-  questions: Question[]
+  questions: QuizQuestion[]
   passingScore: number
   timeLimit: number
+  totalQuestions: number
+  moduleInfo: {
+    id: string
+    title: string
+  }
+  chapterInfo: {
+    id: string
+    title: string
+  }
+  previousAttempt?: {
+    score: number
+    passed: boolean
+    attemptedAt: string
+  } | null
+  instructions: {
+    passingScore: number
+    timeLimit: number
+    canRetry: boolean
+    totalQuestions: number
+  }
 }
 
 interface QuizResult {
@@ -48,21 +69,39 @@ interface QuizResult {
   completedAt: string
 }
 
+// CORRIGÉ : Interface pour réponse quiz complété
 interface AlreadyCompletedResponse {
-  error: string
+  message: string  // API retourne "message", pas "error"
   alreadyCompleted: true
   result: QuizResult
+}
+
+interface QuizSubmitResponse {
+  success: boolean
+  score: number
+  passed: boolean
+  correctAnswers: number
+  totalQuestions: number
+  results: Array<{
+    questionId: string
+    userAnswer: number | boolean
+    correctAnswer: number | boolean
+    isCorrect: boolean
+    explanation?: string
+  }>
+  message?: string
+  error?: string
 }
 
 export default function QuizPage() {
   const { data: session, status } = useSession()
   const router = useRouter()
-  const params = useParams()
+  const params = useParams() // params.id est le chapterId
   const [quiz, setQuiz] = useState<Quiz | null>(null)
   const [currentQuestion, setCurrentQuestion] = useState(0)
-  const [answers, setAnswers] = useState<{ [key: string]: number }>({})
+  const [answers, setAnswers] = useState<{ [key: string]: number | boolean }>({})
   const [showResults, setShowResults] = useState(false)
-  const [score, setScore] = useState(0)
+  const [quizResult, setQuizResult] = useState<QuizSubmitResponse | null>(null)
   const [timeLeft, setTimeLeft] = useState(0)
   const [quizStarted, setQuizStarted] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -78,35 +117,42 @@ export default function QuizPage() {
     }
   }, [session, status, router])
 
-  // Charger les données du quiz
+  // CORRIGÉ : Charger les données du quiz avec gestion correcte des réponses
   useEffect(() => {
     if (session && params.id) {
       const fetchQuiz = async () => {
         try {
           setLoading(true)
-          const response = await fetch(`/api/modules/${params.id}/quiz`)
+          // L'API GET attend un chapterId dans params.id
+          const response = await fetch(`/api/quiz/${params.id}`)
           
-          if (!response.ok) {
-            const errorData = await response.json()
+          // CORRIGÉ : Gestion du cas quiz complété (status 200)
+          if (response.ok) {
+            const data = await response.json()
             
-            // Cas spécial : quiz déjà complété
-            if (errorData.alreadyCompleted) {
-              const completedData = errorData as AlreadyCompletedResponse
+            // Cas spécial : quiz déjà complété (status 200 avec alreadyCompleted)
+            if (data.alreadyCompleted) {
+              const completedData = data as AlreadyCompletedResponse
               setAlreadyCompleted(completedData.result)
-              toast.info('Vous avez déjà complété ce quiz')
+              toast.info('Vous avez déjà complété ce quiz avec succès')
               return
             }
             
-            throw new Error(errorData.error || 'Erreur lors de la récupération du quiz')
+            // Quiz normal
+            const quizData: Quiz = data
+            setQuiz(quizData)
+            setTimeLeft(quizData.timeLimit * 60) // Convertir en secondes
+            
+          } else {
+            // Erreurs normales (4xx, 5xx)
+            const errorData = await response.json()
+            throw new Error(errorData.error || errorData.message || 'Erreur lors de la récupération du quiz')
           }
           
-          const data = await response.json()
-          setQuiz(data)
-          setTimeLeft(data.timeLimit * 60) // Convertir en secondes
         } catch (error: any) {
           console.error('Erreur lors du chargement du quiz:', error)
           toast.error(error.message || 'Impossible de charger le quiz')
-          router.push(`/modules/${params.id}`)
+          router.push('/modules')
         } finally {
           setLoading(false)
         }
@@ -115,34 +161,19 @@ export default function QuizPage() {
     }
   }, [session, params.id, router])
 
-  // Fonction pour soumettre le quiz
+  // Fonction pour soumettre le quiz - CORRIGÉE
   const handleSubmitQuiz = useCallback(async () => {
     if (!quiz || isSubmitting) return
 
     setIsSubmitting(true)
 
     try {
-      let correctAnswers = 0
-      quiz.questions.forEach(question => {
-        if (answers[question.id] === question.correctAnswer) {
-          correctAnswers++
-        }
-      })
-
-      const finalScore = Math.round((correctAnswers / quiz.questions.length) * 100)
-      setScore(finalScore)
-      setShowResults(true)
-
-      const passed = finalScore >= quiz.passingScore
-
-      // Enregistrer le résultat du quiz
+      // CORRECTION : utilise l'ID du quiz directement depuis l'objet quiz
       const response = await fetch(`/api/quiz/${quiz.id}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          answers, 
-          score: finalScore, 
-          passed 
+          answers: answers // Seules les réponses, le calcul se fait côté serveur
         })
       })
 
@@ -151,10 +182,19 @@ export default function QuizPage() {
         throw new Error(errorData.error || 'Erreur lors de l\'enregistrement')
       }
       
-      if (passed) {
-        toast.success('Félicitations ! Vous avez réussi le QCM !')
+      const result: QuizSubmitResponse = await response.json()
+      
+      if (result.success) {
+        setQuizResult(result)
+        setShowResults(true)
+        
+        if (result.passed) {
+          toast.success(`Félicitations ! Vous avez réussi le quiz avec ${result.score}% !`)
+        } else {
+          toast.error(`Score: ${result.score}%. Vous devez obtenir au moins ${quiz.passingScore}% pour valider le chapitre.`)
+        }
       } else {
-        toast.error(`Score insuffisant. Vous devez obtenir au moins ${quiz.passingScore}% pour valider le module.`)
+        throw new Error(result.error || 'Erreur lors de l\'enregistrement')
       }
     } catch (error: any) {
       console.error('Erreur lors de l\'enregistrement du résultat:', error)
@@ -185,10 +225,10 @@ export default function QuizPage() {
     setQuizStarted(true)
   }
 
-  const handleAnswerChange = (questionId: string, answerIndex: number) => {
+  const handleAnswerChange = (questionId: string, answerValue: number | boolean) => {
     setAnswers(prev => ({
       ...prev,
-      [questionId]: answerIndex
+      [questionId]: answerValue
     }))
   }
 
@@ -214,6 +254,12 @@ export default function QuizPage() {
     })
   }
 
+  // Fonction pour vérifier si toutes les questions ont une réponse
+  const allQuestionsAnswered = () => {
+    if (!quiz) return false
+    return quiz.questions.every(q => answers[q.id] !== undefined)
+  }
+
   // Loading state
   if (loading || status === 'loading') {
     return (
@@ -233,11 +279,11 @@ export default function QuizPage() {
       <main className="container mx-auto px-4 py-8">
         <div className="flex items-center justify-between mb-6">
           <Link
-            href={`/modules/${params.id}`}
+            href="/modules"
             className="flex items-center text-blue-600 hover:text-orange-600 transition-colors"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Retour au module
+            Retour aux modules
           </Link>
           {quizStarted && !showResults && quiz && (
             <div className="flex items-center space-x-4">
@@ -257,68 +303,42 @@ export default function QuizPage() {
           <div className="max-w-2xl mx-auto">
             <Card className="shadow-xl">
               <CardHeader className="text-center">
-                <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 ${
-                  alreadyCompleted.passed ? 'bg-green-100' : 'bg-orange-100'
-                }`}>
-                  {alreadyCompleted.passed ? (
-                    <Award className="w-10 h-10 text-green-600" />
-                  ) : (
-                    <AlertCircle className="w-10 h-10 text-orange-600" />
-                  )}
+                <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Award className="w-10 h-10 text-green-600" />
                 </div>
                 <CardTitle className="text-2xl text-blue-900">
-                  Quiz déjà complété
+                  Quiz déjà complété avec succès
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="text-center">
-                  <div className={`text-4xl font-bold mb-2 ${
-                    alreadyCompleted.passed ? 'text-green-600' : 'text-orange-600'
-                  }`}>
+                  <div className="text-4xl font-bold mb-2 text-green-600">
                     {alreadyCompleted.score}%
                   </div>
                   <p className="text-gray-600 mb-2">
-                    {alreadyCompleted.passed ? 'Quiz réussi !' : 'Quiz non réussi'}
+                    Quiz réussi !
                   </p>
                   <p className="text-sm text-gray-500">
                     Complété le {formatDate(alreadyCompleted.completedAt)}
                   </p>
                 </div>
 
-                <div className="bg-blue-50 p-4 rounded-lg">
+                <div className="bg-green-50 p-4 rounded-lg">
                   <div className="flex items-start">
-                    <AlertCircle className="w-5 h-5 text-blue-600 mr-2 mt-0.5" />
+                    <CheckCircle className="w-5 h-5 text-green-600 mr-2 mt-0.5" />
                     <div>
-                      <h4 className="font-semibold text-blue-900 mb-1">Information :</h4>
-                      <p className="text-sm text-blue-800">
-                        Vous ne pouvez passer ce quiz qu'une seule fois par module. 
-                        {alreadyCompleted.passed 
-                          ? ' Vous pouvez maintenant continuer vers le module suivant.'
-                          : ' Vous devrez revoir le contenu du module si vous souhaitez progresser.'
-                        }
+                      <h4 className="font-semibold text-green-900 mb-1">Félicitations !</h4>
+                      <p className="text-sm text-green-800">
+                        Vous avez déjà réussi ce quiz. Vous pouvez maintenant continuer vers le chapitre suivant.
                       </p>
                     </div>
                   </div>
                 </div>
 
                 <div className="flex flex-col space-y-3">
-                  {alreadyCompleted.passed ? (
-                    <Link href="/modules">
-                      <Button className="w-full bg-green-500 hover:bg-green-600">
-                        Continuer vers le module suivant
-                      </Button>
-                    </Link>
-                  ) : (
-                    <Link href={`/modules/${params.id}`}>
-                      <Button className="w-full bg-orange-500 hover:bg-orange-600">
-                        Revoir le module
-                      </Button>
-                    </Link>
-                  )}
-                  
                   <Link href="/modules">
-                    <Button variant="outline" className="w-full">
-                      Retour aux modules
+                    <Button className="w-full bg-green-500 hover:bg-green-600">
+                      Continuer vers les modules
                     </Button>
                   </Link>
                 </div>
@@ -327,7 +347,7 @@ export default function QuizPage() {
           </div>
         )}
 
-        {/* Quiz non démarré */}
+        {/* Quiz non démarré - CORRIGÉ avec les bonnes propriétés */}
         {!alreadyCompleted && quiz && !quizStarted && (
           <div className="max-w-2xl mx-auto">
             <Card className="shadow-xl">
@@ -338,17 +358,41 @@ export default function QuizPage() {
                 <CardTitle className="text-2xl text-blue-900">
                   {quiz.title}
                 </CardTitle>
+                <p className="text-gray-600 mt-2">
+                  {/* CORRIGÉ : Utilisation des bonnes propriétés */}
+                  {quiz.moduleInfo.title} - {quiz.chapterInfo.title}
+                </p>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="bg-blue-50 p-4 rounded-lg">
                   <h3 className="font-semibold text-blue-900 mb-2">Instructions :</h3>
                   <ul className="space-y-2 text-sm text-blue-800">
-                    <li>• {quiz.questions.length} questions à choix multiples</li>
+                    <li>• {quiz.totalQuestions} questions</li>
                     <li>• Temps limite : {quiz.timeLimit} minutes</li>
                     <li>• Score minimum requis : {quiz.passingScore}%</li>
-                    <li>• Une seule tentative par module</li>
+                    <li>• {quiz.instructions.canRetry ? 'Quiz peut être repris en cas d\'échec' : 'Quiz validé une seule fois'}</li>
                   </ul>
                 </div>
+
+                {quiz.previousAttempt && !quiz.previousAttempt.passed && (
+                  <div className="bg-orange-50 p-4 rounded-lg">
+                    <div className="flex items-start">
+                      <AlertCircle className="w-5 h-5 text-orange-600 mr-2 mt-0.5" />
+                      <div>
+                        <h4 className="font-semibold text-orange-900 mb-1">Tentative précédente :</h4>
+                        <p className="text-sm text-orange-800">
+                          Vous avez déjà tenté ce quiz (Score: {quiz.previousAttempt.score}%). 
+                          {quiz.instructions.canRetry && 
+                            ' Vous pouvez réessayer jusqu\'à ce que vous obteniez le score requis.'
+                          }
+                        </p>
+                        <p className="text-xs text-orange-600 mt-1">
+                          Dernière tentative : {formatDate(quiz.previousAttempt.attemptedAt)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="bg-orange-50 p-4 rounded-lg">
                   <div className="flex items-start">
@@ -356,8 +400,8 @@ export default function QuizPage() {
                     <div>
                       <h4 className="font-semibold text-orange-900 mb-1">Important :</h4>
                       <p className="text-sm text-orange-800">
-                        Vous devez réussir ce QCM pour débloquer le module suivant. 
-                        Assurez-vous d'avoir bien assimilé le contenu de la vidéo avant de commencer.
+                        Vous devez réussir ce quiz pour débloquer le chapitre suivant. 
+                        Assurez-vous d'avoir bien assimilé tous les contenus du chapitre avant de commencer.
                       </p>
                     </div>
                   </div>
@@ -367,71 +411,77 @@ export default function QuizPage() {
                   onClick={startQuiz}
                   className="w-full bg-orange-500 hover:bg-orange-600 text-lg py-3"
                 >
-                  Commencer le QCM
+                  Commencer le Quiz
                 </Button>
               </CardContent>
             </Card>
           </div>
         )}
 
-        {/* Résultats du quiz */}
-        {!alreadyCompleted && showResults && quiz && (
+        {/* Résultats du quiz - CORRIGÉ avec les données de l'API */}
+        {!alreadyCompleted && showResults && quiz && quizResult && (
           <div className="max-w-2xl mx-auto">
             <Card className="shadow-xl">
               <CardHeader className="text-center">
                 <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 ${
-                  score >= quiz.passingScore ? 'bg-green-100' : 'bg-red-100'
+                  quizResult.passed ? 'bg-green-100' : 'bg-red-100'
                 }`}>
-                  {score >= quiz.passingScore ? (
+                  {quizResult.passed ? (
                     <Award className="w-10 h-10 text-green-600" />
                   ) : (
                     <XCircle className="w-10 h-10 text-red-600" />
                   )}
                 </div>
                 <CardTitle className="text-2xl text-blue-900">
-                  Résultats du QCM
+                  Résultats du Quiz
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="text-center">
-                  <div className={`text-4xl font-bold mb-2 ${getScoreColor(score, quiz.passingScore)}`}>
-                    {score}%
+                  <div className={`text-4xl font-bold mb-2 ${getScoreColor(quizResult.score, quiz.passingScore)}`}>
+                    {quizResult.score}%
                   </div>
                   <p className="text-gray-600">
-                    {score >= quiz.passingScore ? 'Félicitations ! Vous avez réussi.' : 'Score insuffisant pour valider le module.'}
+                    {quizResult.passed ? 'Félicitations ! Vous avez réussi.' : 'Score insuffisant pour valider le chapitre.'}
                   </p>
+                  {quizResult.message && (
+                    <p className="text-sm text-gray-500 mt-2">
+                      {quizResult.message}
+                    </p>
+                  )}
                 </div>
 
                 <div className="bg-gray-50 p-4 rounded-lg">
                   <div className="grid grid-cols-2 gap-4 text-center">
                     <div>
                       <div className="text-2xl font-bold text-blue-600">
-                        {quiz.questions.filter(q => answers[q.id] === q.correctAnswer).length}
+                        {quizResult.correctAnswers}
                       </div>
                       <div className="text-sm text-gray-600">Bonnes réponses</div>
                     </div>
                     <div>
                       <div className="text-2xl font-bold text-gray-600">
-                        {quiz.questions.length}
+                        {quizResult.totalQuestions}
                       </div>
                       <div className="text-sm text-gray-600">Total questions</div>
                     </div>
                   </div>
                 </div>
 
+                {/* Détail des réponses */}
                 <div className="space-y-4">
                   <h3 className="font-semibold text-blue-900">Détail des réponses :</h3>
-                  {quiz.questions.map((question, index) => {
-                    const userAnswer = answers[question.id]
-                    const isCorrect = userAnswer === question.correctAnswer
+                  {quizResult.results.map((result, index) => {
+                    const question = quiz.questions.find(q => q.id === result.questionId)
+                    if (!question) return null
                     
                     return (
-                      <div key={question.id} className="border rounded-lg p-4">
+                      <div key={result.questionId} className="border rounded-lg p-4">
                         <div className="flex items-start justify-between mb-2">
                           <h4 className="font-medium text-gray-900 flex-1">
                             {index + 1}. {question.question}
                           </h4>
-                          {isCorrect ? (
+                          {result.isCorrect ? (
                             <CheckCircle className="w-5 h-5 text-green-600 ml-2" />
                           ) : (
                             <XCircle className="w-5 h-5 text-red-600 ml-2" />
@@ -439,23 +489,49 @@ export default function QuizPage() {
                         </div>
                         
                         <div className="text-sm space-y-1">
-                          <p>
-                            <span className="font-medium">Votre réponse : </span>
-                            <span className={isCorrect ? 'text-green-600' : 'text-red-600'}>
-                              {userAnswer !== undefined ? question.options[userAnswer] : 'Aucune réponse'}
-                            </span>
-                          </p>
-                          {!isCorrect && (
-                            <p>
-                              <span className="font-medium">Bonne réponse : </span>
-                              <span className="text-green-600">
-                                {question.options[question.correctAnswer]}
-                              </span>
-                            </p>
+                          {question.type === 'multiple_choice' ? (
+                            <>
+                              <p>
+                                <span className="font-medium">Votre réponse : </span>
+                                <span className={result.isCorrect ? 'text-green-600' : 'text-red-600'}>
+                                  {question.options && typeof result.userAnswer === 'number' ? 
+                                    question.options[result.userAnswer] : 'Aucune réponse'}
+                                </span>
+                              </p>
+                              {!result.isCorrect && (
+                                <p>
+                                  <span className="font-medium">Bonne réponse : </span>
+                                  <span className="text-green-600">
+                                    {question.options && typeof result.correctAnswer === 'number' ? 
+                                      question.options[result.correctAnswer] : 'N/A'}
+                                  </span>
+                                </p>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <p>
+                                <span className="font-medium">Votre réponse : </span>
+                                <span className={result.isCorrect ? 'text-green-600' : 'text-red-600'}>
+                                  {typeof result.userAnswer === 'boolean' ? 
+                                    (result.userAnswer ? 'Vrai' : 'Faux') : 'Aucune réponse'}
+                                </span>
+                              </p>
+                              {!result.isCorrect && (
+                                <p>
+                                  <span className="font-medium">Bonne réponse : </span>
+                                  <span className="text-green-600">
+                                    {typeof result.correctAnswer === 'boolean' ? 
+                                      (result.correctAnswer ? 'Vrai' : 'Faux') : 'N/A'}
+                                  </span>
+                                </p>
+                              )}
+                            </>
                           )}
-                          {question.explanation && (
-                            <p className="text-gray-600 italic">
-                              {question.explanation}
+                          
+                          {result.explanation && (
+                            <p className="text-gray-600 italic mt-2 p-2 bg-gray-50 rounded">
+                              <strong>Explication:</strong> {result.explanation}
                             </p>
                           )}
                         </div>
@@ -465,16 +541,16 @@ export default function QuizPage() {
                 </div>
 
                 <div className="flex flex-col space-y-3">
-                  {score >= quiz.passingScore ? (
+                  {quizResult.passed ? (
                     <Link href="/modules">
                       <Button className="w-full bg-green-500 hover:bg-green-600">
-                        Continuer vers le module suivant
+                        Continuer vers le chapitre suivant
                       </Button>
                     </Link>
                   ) : (
-                    <Link href={`/modules/${params.id}`}>
+                    <Link href="/modules">
                       <Button className="w-full bg-orange-500 hover:bg-orange-600">
-                        Revoir le module et réessayer
+                        Revoir le chapitre et réessayer
                       </Button>
                     </Link>
                   )}
@@ -512,21 +588,44 @@ export default function QuizPage() {
                   {quiz.questions[currentQuestion].question}
                 </h3>
 
-                <RadioGroup
-                  value={answers[quiz.questions[currentQuestion].id]?.toString()}
-                  onValueChange={(value) => 
-                    handleAnswerChange(quiz.questions[currentQuestion].id, parseInt(value))
-                  }
-                >
-                  {quiz.questions[currentQuestion].options.map((option, index) => (
-                    <div key={index} className="flex items-center space-x-2 p-3 rounded-lg hover:bg-gray-50 transition-colors">
-                      <RadioGroupItem value={index.toString()} id={`option-${index}`} />
-                      <Label htmlFor={`option-${index}`} className="flex-1 cursor-pointer">
-                        {option}
+                {/* Rendu différent selon le type de question */}
+                {quiz.questions[currentQuestion].type === 'multiple_choice' ? (
+                  <RadioGroup
+                    value={answers[quiz.questions[currentQuestion].id]?.toString()}
+                    onValueChange={(value) => 
+                      handleAnswerChange(quiz.questions[currentQuestion].id, parseInt(value))
+                    }
+                  >
+                    {quiz.questions[currentQuestion].options?.map((option, index) => (
+                      <div key={index} className="flex items-center space-x-2 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+                        <RadioGroupItem value={index.toString()} id={`option-${index}`} />
+                        <Label htmlFor={`option-${index}`} className="flex-1 cursor-pointer">
+                          {option}
+                        </Label>
+                      </div>
+                    ))}
+                  </RadioGroup>
+                ) : (
+                  <RadioGroup
+                    value={answers[quiz.questions[currentQuestion].id]?.toString()}
+                    onValueChange={(value) => 
+                      handleAnswerChange(quiz.questions[currentQuestion].id, value === 'true')
+                    }
+                  >
+                    <div className="flex items-center space-x-2 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+                      <RadioGroupItem value="true" id="true" />
+                      <Label htmlFor="true" className="flex-1 cursor-pointer">
+                        Vrai
                       </Label>
                     </div>
-                  ))}
-                </RadioGroup>
+                    <div className="flex items-center space-x-2 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+                      <RadioGroupItem value="false" id="false" />
+                      <Label htmlFor="false" className="flex-1 cursor-pointer">
+                        Faux
+                      </Label>
+                    </div>
+                  </RadioGroup>
+                )}
 
                 <div className="flex justify-between pt-4">
                   <Button
@@ -542,9 +641,16 @@ export default function QuizPage() {
                     <Button
                       onClick={handleSubmitQuiz}
                       className="bg-green-500 hover:bg-green-600"
-                      disabled={Object.keys(answers).length !== quiz.questions.length || isSubmitting}
+                      disabled={!allQuestionsAnswered() || isSubmitting}
                     >
-                      {isSubmitting ? 'Envoi en cours...' : 'Terminer le QCM'}
+                      {isSubmitting ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          Envoi en cours...
+                        </>
+                      ) : (
+                        'Terminer le Quiz'
+                      )}
                     </Button>
                   ) : (
                     <Button
@@ -555,6 +661,11 @@ export default function QuizPage() {
                       <ArrowRight className="w-4 h-4 ml-2" />
                     </Button>
                   )}
+                </div>
+
+                {/* Indicateur de progression des réponses */}
+                <div className="mt-4 text-sm text-gray-500 text-center">
+                  {Object.keys(answers).length} sur {quiz.questions.length} questions répondues
                 </div>
               </CardContent>
             </Card>

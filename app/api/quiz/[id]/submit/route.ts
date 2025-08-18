@@ -11,44 +11,124 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     }
 
     const body = await request.json();
-    const { answers, score, passed } = body;
+    const { answers } = body;
 
-    // Validation des données
-    if (typeof score !== 'number' || typeof passed !== 'boolean') {
-      return NextResponse.json({ error: 'Données invalides' }, { status: 400 });
+    // Validation des réponses
+    if (!answers || typeof answers !== 'object') {
+      return NextResponse.json({ error: 'Réponses manquantes ou invalides' }, { status: 400 });
     }
 
-    // Vérifier que le quiz existe
+    // CORRECTION : params.id est maintenant le quizId directement
     const quiz = await prisma.quiz.findUnique({
       where: { id: params.id },
-      select: { id: true }
+      select: { 
+        id: true, 
+        chapterId: true,
+        title: true,
+        questions: true, 
+        passingScore: true,
+        results: {
+          where: { userId: session.user.id },
+          select: { id: true, passed: true }
+        }
+      }
     });
 
     if (!quiz) {
       return NextResponse.json({ error: 'Quiz non trouvé' }, { status: 404 });
     }
 
-    // Vérifier l'unicité du résultat pour cet utilisateur et ce quiz
-    const existingResult = await prisma.quizResult.findUnique({
-      where: { userId_quizId: { userId: session.user.id, quizId: params.id } },
-    });
-
-    if (existingResult) {
-      return NextResponse.json({ error: 'Résultat déjà soumis pour ce quiz' }, { status: 400 });
+    // Vérifier si l'utilisateur a déjà réussi ce quiz
+    const hasPassedBefore = quiz.results.some(result => result.passed);
+    if (hasPassedBefore) {
+      return NextResponse.json({ 
+        error: 'Quiz déjà réussi, impossible de le refaire' 
+      }, { status: 400 });
     }
 
-    // Créer le résultat du quiz
+    // Parser les questions
+    let parsedQuestions;
+    try {
+      parsedQuestions = typeof quiz.questions === 'string' 
+        ? JSON.parse(quiz.questions) 
+        : quiz.questions;
+    } catch (error) {
+      return NextResponse.json({ error: 'Format de questions invalide' }, { status: 500 });
+    }
+
+    // Calculer le score côté serveur
+    let correctAnswers = 0;
+    const results = parsedQuestions.map((question: any) => {
+      const userAnswer = answers[question.id];
+      const correctAnswer = question.correctAnswer;
+      const isCorrect = userAnswer === correctAnswer;
+      
+      if (isCorrect) correctAnswers++;
+      
+      return {
+        questionId: question.id,
+        userAnswer: userAnswer,
+        correctAnswer: correctAnswer,
+        isCorrect: isCorrect,
+        explanation: question.explanation
+      };
+    });
+
+    const totalQuestions = parsedQuestions.length;
+    const score = Math.round((correctAnswers / totalQuestions) * 100);
+    const passed = score >= quiz.passingScore;
+
+    // Supprimer l'ancien résultat s'il existe (pour permettre les tentatives multiples jusqu'à réussite)
+    await prisma.quizResult.deleteMany({
+      where: {
+        userId: session.user.id,
+        quizId: params.id
+      }
+    });
+
+    // Créer le nouveau résultat
     const quizResult = await prisma.quizResult.create({
       data: {
         userId: session.user.id,
         quizId: params.id,
-        score,
-        answers: answers || [], // S'assurer que answers n'est pas undefined
-        passed,
+        score: score,
+        answers: answers,
+        passed: passed,
       },
     });
 
-    return NextResponse.json(quizResult, { status: 201 });
+    // Si réussi, mettre à jour la progression du chapitre
+    if (passed) {
+      await prisma.chapterProgress.upsert({
+        where: {
+          userId_chapterId: {
+            userId: session.user.id,
+            chapterId: quiz.chapterId
+          }
+        },
+        update: {
+          isCompleted: true,
+          completedAt: new Date()
+        },
+        create: {
+          userId: session.user.id,
+          chapterId: quiz.chapterId,
+          isCompleted: true,
+          completedAt: new Date()
+        }
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      score: score,
+      passed: passed,
+      correctAnswers: correctAnswers,
+      totalQuestions: totalQuestions,
+      results: results,
+      message: passed ? 'Quiz réussi !' : `Score insuffisant (${score}%). Minimum requis : ${quiz.passingScore}%`
+    });
+
   } catch (error) {
     console.error('Erreur lors de la soumission du quiz:', error);
     return NextResponse.json({ error: 'Erreur interne du serveur' }, { status: 500 });
